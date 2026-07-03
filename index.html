@@ -22243,7 +22243,10 @@ async function cloudFxPublishToPublic() {
   function oraTs(ms) {
     return new Date(ms).toISOString();
   }
-  var defaultExpires = oraTs(nowMs + 24 * 3600 * 1000);
+  // ✅ Прозорецът за видимост в BetPro е спрямо KICKOFF, не спрямо
+  // момента на публикуване — задава се по-долу, индивидуално за
+  // всеки мач, като kickoff + PUBLIC_FX_LINGER_MIN.
+  var PUBLIC_FX_LINGER_MIN = 120; // мачът стои в BetPro 120 мин. след началото
 
   Object.keys(FX_PASTED).forEach(function(country){
     (FX_PASTED[country] || []).forEach(function(m){
@@ -22259,6 +22262,10 @@ async function cloudFxPublishToPublic() {
           pred = quickPredictFromStats(s);
         } catch(e) { pred = null; }
       }
+
+      // ✅ Публикуваме в BetPro САМО мачове с реална прогноза от модела —
+      // без pred (напр. недостатъчно статистика) не се изпращат.
+      if (!pred) return;
 
       // Top market и alternatives
       var topMarket = m.topMarket;
@@ -22293,10 +22300,17 @@ async function cloudFxPublishToPublic() {
       var fixId = m.fixture_id ? String(m.fixture_id) :
                   (m.home + '_' + m.away + '_' + matchDate).replace(/[^\w]/g,'_');
 
-      // Запазваме _publishedAt в локалния обект — ако вече е публикуван,
+      // ✅ Запазваме _publishedAt в локалния обект — ако вече е публикуван,
       // не изпращаме expires_at (запазва оригиналния от cloud)
       var isFirstPublish = !m._publishedAt;
       if (isFirstPublish) m._publishedAt = nowMs;
+
+      // ✅ expires_at = kickoff + 120 мин (НЕ publish-time + 24ч) — мачът
+      // остава видим в BetPro точно 120 мин. след началото си.
+      var kickoffMs = Date.parse(kickoff);
+      var matchExpires = !isNaN(kickoffMs)
+        ? oraTs(kickoffMs + PUBLIC_FX_LINGER_MIN * 60 * 1000)
+        : oraTs(nowMs + PUBLIC_FX_LINGER_MIN * 60 * 1000); // fallback ако kickoff липсва
 
       var row = {
         fixture_id:   fixId,
@@ -22334,10 +22348,11 @@ async function cloudFxPublishToPublic() {
         ha_factor:    pred ? pred.haFactor : null
       };
 
-      // ✅ Само за НОВИ мачове задаваме expires_at (24h от сега).
-      // За съществуващи — Postgres ще запази оригиналния (UPSERT без override).
-      if (isFirstPublish) {
-        row.expires_at = defaultExpires;
+      // ✅ Само за НОВИ мачове задаваме expires_at (kickoff+120мин).
+      // За съществуващи — Postgres ще запази оригиналния (UPSERT без override),
+      // освен ако kickoff-ът се е променил (пренасрочен мач) — тогава опресняваме.
+      if (isFirstPublish || m._kickoffChanged) {
+        row.expires_at = matchExpires;
         row.created_at = oraTs(Date.now());
       }
 
@@ -22369,8 +22384,8 @@ async function cloudFxPublishToPublic() {
         });
         if (r.ok) okCount++;
       } else {
-        // Insert нов — с TTL
-        if (!row.expires_at) row.expires_at = defaultExpires;
+        // Insert нов — с TTL (kickoff+120мин fallback ако липсва)
+        if (!row.expires_at) row.expires_at = oraTs(Date.now() + PUBLIC_FX_LINGER_MIN * 60 * 1000);
         if (!row.created_at) row.created_at = oraTs(Date.now());
         var r2 = await fetch(base + '/' + PUBLIC_FX_TABLE + '/', {
           method: 'POST',
