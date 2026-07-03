@@ -2614,7 +2614,7 @@ input::placeholder, textarea::placeholder {
 
 
   </div>
-  <div id="statsAlwaysVisible">
+  <div id="statsAlwaysVisible" style="display:none">
     <label style="font-size:.7rem;color:var(--acc);font-weight:600">🏆 Лига (за калибрация на baseline)</label>
     <input type="text" id="leagueInput" list="leaguePresets"
       placeholder="Премиер лига, Бундеслига, Eredivisie..."
@@ -25575,15 +25575,16 @@ function mwEmbedPanels() {
   if (!statsEdit) return;
 
   var pasteCard = document.getElementById('statsPasteCard');
-  var statsCard = document.getElementById('statsCard');
+  var statsSum  = document.getElementById('mwStatsSummary');
   if (pasteCard && pasteCard.parentNode !== statsEdit) {
     pasteCard.classList.add('mw-embedded');
     statsEdit.appendChild(pasteCard);
   }
   mwShow(pasteCard);
-  if (statsCard && statsCard.parentNode !== statsEdit) {
-    statsCard.classList.add('mw-embedded');
-    statsEdit.appendChild(statsCard);
+  // ✅ Красивата, изчерпателна таблица със статистики живее ВЪТРЕ в
+  // edit-а — показва се и скрива заедно с paste полето (не отделно).
+  if (statsSum && statsSum.parentNode !== statsEdit) {
+    statsEdit.appendChild(statsSum);
   }
   if (!document.getElementById('mwStatsSaveBtn')) {
     var sBtn = document.createElement('button');
@@ -25592,8 +25593,11 @@ function mwEmbedPanels() {
     sBtn.onclick = function(){ mwSaveSection('stats'); };
     statsEdit.appendChild(sBtn);
   }
-  // ✅ Суровата решетка (statsPanel) НИКОГА не се показва — само paste
-  // интерфейсът (statsPasteCard header/toolbar + "Допълни статистика").
+  // ✅ statsCard (стар header/toolbar + сурова решетка) вече НИКОГА не
+  // се показва на потребителя — полетата му остават в DOM-а само за
+  // calculate(), но извън видимия работен процес.
+  var statsCard = document.getElementById('statsCard');
+  if (statsCard) mwHide(statsCard);
   var spEl = document.getElementById('statsPanel');
   if (spEl) mwHide(spEl);
 
@@ -25703,8 +25707,9 @@ function mwExpandSection(key) {
   var sum  = document.getElementById('mw' + mwCap(key) + 'Summary');
   var chev = document.getElementById('mwChev' + mwCap(key));
   if (edit) edit.style.display = 'block';
-  // ✅ Статистика: таблицата остава ВИНАГИ видима (и разгъната, и свита) —
-  // при разгъване просто се добавя paste полето отгоре/под нея.
+  // OA/Коефициенти: показваме edit-а, скриваме компактния chip-summary.
+  // Статистика: таблицата вече е ВЪТРЕ в edit-а (виж mwEmbedPanels), така
+  // че отделно управление на sum не е нужно за 'stats'.
   if (sum && key !== 'stats') sum.style.display = 'none';
   if (chev) chev.textContent   = '▼';
   // ✅ Явно показваме вградените карти за тази секция
@@ -25712,9 +25717,6 @@ function mwExpandSection(key) {
     var el = document.getElementById(id);
     if (el) mwShow(el);
   });
-  // Суровата решетка не се показва дори когато statsCard е видим
-  var spEl = document.getElementById('statsPanel');
-  if (spEl) mwHide(spEl);
   if (key === 'stats') mwRenderStatsSummary();
   MW_OPEN_SECTIONS[key] = true;
 }
@@ -25722,7 +25724,7 @@ function mwExpandSection(key) {
 // трябва ЯВНО да се скриват при затваряне (защита в дълбочина — не
 // разчитаме само на display:none на wrapper дива).
 var MW_SECTION_CARDS = {
-  stats: ['statsPasteCard', 'statsCard'],
+  stats: [],
   oa: ['oaProbsModal'],
   odds: ['oddsCard']
 };
@@ -25739,7 +25741,8 @@ function mwCollapseSection(key) {
   var sum  = document.getElementById('mw' + mwCap(key) + 'Summary');
   var chev = document.getElementById('mwChev' + mwCap(key));
   if (edit) edit.style.display = 'none';
-  if (sum)  sum.style.display  = 'block';
+  // За 'stats' таблицата е вътре в edit-а — вече е скрита заедно с него.
+  if (sum && key !== 'stats') sum.style.display = 'block';
   if (chev) chev.textContent   = '▶';
   // ✅ Директно скриваме и самите вградени карти (не само wrapper-а)
   (MW_SECTION_CARDS[key] || []).forEach(function(id){
