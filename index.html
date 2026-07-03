@@ -25978,16 +25978,20 @@ function mwCalc() {
       var probMap = { '1':CC.pH*100, 'X':CC.pD*100, '2':CC.pA*100, 'O2.5':CC.pO*100, 'U2.5':CC.pU*100, 'BTTS':CC.pB*100 };
       m.topMarket = { mkt: best[0], prob: probMap[best[0]] != null ? probMap[best[0]] : 50, conf: 99, col: 'var(--acc)' };
     }
-    // Value bets спрямо реално въведените коефициенти (b1/bx/b2/bo/bu/bb)
+    // ✅ Реално въведените коефициенти (b1/bx/b2/bo/bu/bb) — записваме ги
+    // върху m.odds, защото publish функцията чете ИМЕННО оттам. Преди
+    // тази промяна те се ползваха само локално за calcValueBets и никога
+    // не стигаха до BetPro (оттам "N/A" за коефициентите там).
+    var oddsNow = {
+      home: document.getElementById('b1') && document.getElementById('b1').value,
+      draw: document.getElementById('bx') && document.getElementById('bx').value,
+      away: document.getElementById('b2') && document.getElementById('b2').value,
+      over25: document.getElementById('bo') && document.getElementById('bo').value,
+      under25: document.getElementById('bu') && document.getElementById('bu').value,
+      btts: document.getElementById('bb') && document.getElementById('bb').value
+    };
+    m.odds = oddsNow;
     if (typeof calcValueBets === 'function') {
-      var oddsNow = {
-        home: document.getElementById('b1') && document.getElementById('b1').value,
-        draw: document.getElementById('bx') && document.getElementById('bx').value,
-        away: document.getElementById('b2') && document.getElementById('b2').value,
-        over25: document.getElementById('bo') && document.getElementById('bo').value,
-        under25: document.getElementById('bu') && document.getElementById('bu').value,
-        btts: document.getElementById('bb') && document.getElementById('bb').value
-      };
       try { m.valueBets = calcValueBets(m.modelProbs, oddsNow); } catch(e){}
     }
     // Публикуваме веднага (не debounced) — за да се появи в BetPro без забавяне
