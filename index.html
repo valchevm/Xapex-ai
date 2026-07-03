@@ -1774,6 +1774,10 @@ input::placeholder, textarea::placeholder {
      тук ги крием безусловно; mwShow() (inline !important) винаги ги
      разкрива коректно, когато потребителят реално отвори секцията. */
   #statsCard, #oddsCard, #statsPasteCard { display:none !important; }
+  /* ✅ Суровата решетка от полета (statsPanel) никога не се показва на
+     потребителя — само paste + красивата таблица. Стрелката за нейното
+     превключване също е скрита, за да няма начин да се "отключи". */
+  #statsPanel, #statsArrow { display:none !important; }
 
   /* ═══ MATCH WORKSPACE (fixtures-centric UI, accordion) ═══
      statsCard/oddsCard/oaProbsModal се "докват" вътре в edit слотовете
@@ -2610,10 +2614,7 @@ input::placeholder, textarea::placeholder {
 
 
   </div>
-  <div id="statsPanel">
-
-  <!-- ✅ LEAGUE PICKER — детектира baseline за лиго-специфични прогнози -->
-  <div style="margin-bottom:.8rem">
+  <div id="statsAlwaysVisible">
     <label style="font-size:.7rem;color:var(--acc);font-weight:600">🏆 Лига (за калибрация на baseline)</label>
     <input type="text" id="leagueInput" list="leaguePresets"
       placeholder="Премиер лига, Бундеслига, Eredivisie..."
@@ -2649,46 +2650,6 @@ input::placeholder, textarea::placeholder {
     <div id="leagueIndicator" style="font-size:.6rem;color:var(--dim);margin-top:.2rem">
       💡 Празно поле = глобален baseline 2.60 г/мач
     </div>
-  </div>
-
-  <!-- ✅ LEAGUE PICKER — детектира baseline за лиго-специфични прогнози -->
-  <div style="margin-bottom:.8rem">
-    <label style="font-size:.7rem;color:var(--acc);font-weight:600">🏆 Лига (за калибрация на baseline)</label>
-    <input type="text" id="leagueInput" list="leaguePresets"
-      placeholder="Premier League, Bundesliga, Eredivisie..."
-      style="width:100%;margin-top:.25rem"
-      oninput="updateLeagueIndicator()">
-    <datalist id="leaguePresets">
-      <option value="Premier League">EPL — Англия (2.92 г/мач)</option>
-      <option value="La Liga">Испания (2.52)</option>
-      <option value="Serie A">Италия (2.85)</option>
-      <option value="Bundesliga">Германия (3.10)</option>
-      <option value="Ligue 1">Франция (2.65)</option>
-      <option value="Eredivisie">Холандия (3.25)</option>
-      <option value="Championship">EFL Championship (2.50)</option>
-      <option value="Primeira Liga">Португалия (2.47)</option>
-      <option value="Süper Lig">Турция (2.90)</option>
-      <option value="Belgian Pro League">Белгия (2.85)</option>
-      <option value="Allsvenskan">Швеция (2.75)</option>
-      <option value="Eliteserien">Норвегия (3.00)</option>
-      <option value="Veikkausliiga">Финландия (2.75)</option>
-      <option value="Superliga">Дания (2.65)</option>
-      <option value="Ekstraklasa">Полша (2.54)</option>
-      <option value="Liga I">Румъния (2.48)</option>
-      <option value="Parva Liga">България (2.53)</option>
-      <option value="Czech First League">Чехия (2.65)</option>
-      <option value="Champions League">UCL (2.85)</option>
-      <option value="Europa League">UEL (2.65)</option>
-      <option value="Conference League">UECL (2.95)</option>
-      <option value="2. Bundesliga">2. Bundesliga (2.95)</option>
-      <option value="Serie B">Serie B (2.50)</option>
-      <option value="La Liga 2">La Liga 2 (2.30)</option>
-      <option value="Ligue 2">Ligue 2 (2.30)</option>
-    </datalist>
-    <div id="leagueIndicator" style="font-size:.6rem;color:var(--dim);margin-top:.2rem">
-      💡 Празно поле = глобален baseline 2.60 г/мач
-    </div>
-  </div>
 
   <div class="g2" style="margin-bottom:1rem">
     <div><label>Домакин</label><input type="text" id="hTeam" placeholder="Домакин"></div>
@@ -2718,7 +2679,11 @@ input::placeholder, textarea::placeholder {
       <div id="statAppendResult" style="font-size:.65rem;margin-top:.5rem;display:none"></div>
     </div>
   </div>
+  </div><!-- statsAlwaysVisible -->
 
+  <!-- ✅ Суровата решетка от полета — остава в DOM за calculate(), но
+       вече е ПОСТОЯННО скрита от потребителя (виж #statsPanel CSS rule) -->
+  <div id="statsPanel">
   <!-- CORE STATS (always visible) -->
   <div class="grid" style="margin-bottom:.5rem">
     <div>
@@ -21050,6 +21015,7 @@ function statAppendParse() {
 
   // Синхронизираме обратно в FX_PASTED ако има активен мач
   statAppendSyncToFixture();
+  if (typeof mwRenderStatsSummary === 'function') mwRenderStatsSummary();
 
   if (resultEl) {
     resultEl.style.display = 'block';
@@ -25626,7 +25592,10 @@ function mwEmbedPanels() {
     sBtn.onclick = function(){ mwSaveSection('stats'); };
     statsEdit.appendChild(sBtn);
   }
-  mwCollapseRawFields(true);
+  // ✅ Суровата решетка (statsPanel) НИКОГА не се показва — само paste
+  // интерфейсът (statsPasteCard header/toolbar + "Допълни статистика").
+  var spEl = document.getElementById('statsPanel');
+  if (spEl) mwHide(spEl);
 
   var oaModal = document.getElementById('oaProbsModal');
   if (oaModal && oaModal.parentNode !== oaEdit) {
@@ -25649,43 +25618,29 @@ function mwEmbedPanels() {
     oddsEdit.appendChild(oBtn);
   }
 
-  var sp = document.getElementById('statsPanel'); if (sp) mwShow(sp);
-  var op = document.getElementById('oddsPanel');  if (op) mwShow(op);
+  var op = document.getElementById('oddsPanel'); if (op) mwShow(op);
 }
 
-function mwCollapseRawFields(collapsed) {
-  var statsCard = document.getElementById('statsCard');
-  if (!statsCard) return;
-  var toggle = document.getElementById('mwRawToggle');
-  if (!toggle) {
-    toggle = document.createElement('button');
-    toggle.type = 'button';
-    toggle.id = 'mwRawToggle';
-    toggle.className = 'btn btn-sec';
-    toggle.style.cssText = 'width:100%;margin:.5rem 0;font-size:.7rem';
-    toggle.onclick = function(){ mwCollapseRawFields(statsCard.getAttribute('data-mw-collapsed') !== '1'); };
-    statsCard.parentNode.insertBefore(toggle, statsCard);
+// ── Read-only summary — показва ВСИЧКИ налични статистики (не само
+// куратиран subset), генерирани директно от FX_STAT_MAP (label→[h,a]).
+var MW_SUMMARY_ROWS_CACHE = null;
+function mwGetSummaryRows() {
+  if (MW_SUMMARY_ROWS_CACHE) return MW_SUMMARY_ROWS_CACHE;
+  var rows = [];
+  if (typeof FX_STAT_MAP !== 'undefined') {
+    Object.keys(FX_STAT_MAP).forEach(function(label){
+      var ids = FX_STAT_MAP[label];
+      if (ids && ids.length === 2) rows.push([ids[0], ids[1], label]);
+    });
   }
-  statsCard.setAttribute('data-mw-collapsed', collapsed ? '1' : '0');
-  toggle.textContent = collapsed ? '✏️ Ръчна редакция на полетата (за напреднали)' : '▲ Скрий ръчните полета';
-  if (collapsed) mwHide(statsCard); else mwShow(statsCard);
+  MW_SUMMARY_ROWS_CACHE = rows;
+  return rows;
 }
-
-// ── Компактни read-only summaries, показвани когато секцията е затворена ──
-var MW_SUMMARY_ROWS = [
-  ['h_po','a_po','Позиция'], ['h_mp','a_mp','Изиграни мачове'],
-  ['h_win','a_win','Победи'], ['h_draw','a_draw','Равенства'], ['h_lost','a_lost','Загуби'],
-  ['h_pts','a_pts','Точки'], ['h_pp','a_pp','Точки/мач'],
-  ['h_sc','a_sc','Отбелязани (ср.)'], ['h_co','a_co','Допуснати (ср.)'],
-  ['h_gd','a_gd','Голова разлика'],
-  ['h_bt','a_bt','BTTS %'], ['h_cs','a_cs','Чисти мрежи %'], ['h_fts','a_fts','Не отбеляза %'],
-  ['h_cor','a_cor','Корнери (ср.)'], ['h_card','a_card','Картони (ср.)']
-];
 function mwRenderStatsSummary() {
   var box = document.getElementById('mwStatsSummary');
   if (!box) return;
   var rows = '';
-  MW_SUMMARY_ROWS.forEach(function(r){
+  mwGetSummaryRows().forEach(function(r){
     var hEl = document.getElementById(r[0]), aEl = document.getElementById(r[1]);
     var hv = hEl && hEl.value !== '' ? hEl.value : null;
     var av = aEl && aEl.value !== '' ? aEl.value : null;
@@ -25748,13 +25703,19 @@ function mwExpandSection(key) {
   var sum  = document.getElementById('mw' + mwCap(key) + 'Summary');
   var chev = document.getElementById('mwChev' + mwCap(key));
   if (edit) edit.style.display = 'block';
-  if (sum)  sum.style.display  = 'none';
+  // ✅ Статистика: таблицата остава ВИНАГИ видима (и разгъната, и свита) —
+  // при разгъване просто се добавя paste полето отгоре/под нея.
+  if (sum && key !== 'stats') sum.style.display = 'none';
   if (chev) chev.textContent   = '▼';
   // ✅ Явно показваме вградените карти за тази секция
   (MW_SECTION_CARDS[key] || []).forEach(function(id){
     var el = document.getElementById(id);
     if (el) mwShow(el);
   });
+  // Суровата решетка не се показва дори когато statsCard е видим
+  var spEl = document.getElementById('statsPanel');
+  if (spEl) mwHide(spEl);
+  if (key === 'stats') mwRenderStatsSummary();
   MW_OPEN_SECTIONS[key] = true;
 }
 // Директно съответствие secion key → реалните engine елементи, които
