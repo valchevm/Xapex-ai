@@ -22233,6 +22233,7 @@ async function cloudFxPublishToPublic() {
   // ── STEP 2: Build payload ──
   var rows = [];
   var skipped = [];
+  var errors = [];
   var nowMs = Date.now();
   function oraTs(ms) {
     return new Date(ms).toISOString();
@@ -22380,6 +22381,10 @@ async function cloudFxPublishToPublic() {
           body: JSON.stringify(updRow)
         });
         if (r.ok) okCount++;
+        else {
+          var etxt = await r.text().catch(function(){ return ''; });
+          errors.push(row.fixture_id + ': HTTP ' + r.status + ' (PUT) ' + etxt.slice(0,150));
+        }
       } else {
         // Insert нов — с TTL (kickoff+120мин fallback ако липсва)
         if (!row.expires_at) row.expires_at = oraTs(Date.now() + PUBLIC_FX_LINGER_MIN * 60 * 1000);
@@ -22390,9 +22395,14 @@ async function cloudFxPublishToPublic() {
           body: JSON.stringify(row)
         });
         if (r2.ok) okCount++;
+        else {
+          var etxt2 = await r2.text().catch(function(){ return ''; });
+          errors.push(row.fixture_id + ': HTTP ' + r2.status + ' (POST) ' + etxt2.slice(0,150));
+        }
       }
     } catch(e) {
       console.warn('[publicFx] row fail', row.fixture_id, e.message);
+      errors.push(row.fixture_id + ': ' + e.message);
     }
   }
   console.log('[publicFx] ✓ ' + okCount + '/' + rows.length + ' fixtures публикувани в Oracle');
@@ -22400,6 +22410,12 @@ async function cloudFxPublishToPublic() {
     console.warn('[publicFx] ⚠ Пропуснати (без прогноза от модела):', skipped);
     if (typeof showToast === 'function') {
       showToast('⚠ ' + skipped.length + ' мач(а) пропуснати — липсва достатъчно статистика за прогноза (виж конзолата)', 'warn');
+    }
+  }
+  if (errors.length) {
+    console.error('[publicFx] ❌ Грешки при публикуване:', errors);
+    if (typeof showToast === 'function') {
+      showToast('❌ Грешка при публикуване в BetPro: ' + errors[0], 'error');
     }
   }
   return okCount > 0;
