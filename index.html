@@ -1766,23 +1766,17 @@ input::placeholder, textarea::placeholder {
   body.in-screen .nav-card:not(.active) { display:none !important; }
   body.in-screen .nav-card.active { display:block !important; }
 
-  /* ═══ MATCH WORKSPACE (fixtures-centric UI) ═══
-     statsCard/oddsCard/oaProbsModal/resCard се "докват" вътре в отворен
-     мач. ВАЖНО: body.in-screen .nav-card:not(.active) { display:none!important }
+  /* ═══ MATCH WORKSPACE (fixtures-centric UI, accordion) ═══
+     statsCard/oddsCard/oaProbsModal се "докват" вътре в edit слотовете
+     на затворени по подразбиране accordion секции. ВАЖНО:
+     body.in-screen .nav-card:not(.active) { display:none!important }
      печели над обикновени class селектори по specificity — затова тук
-     ползваме ID-базирани правила (по-висока specificity), контролирани
-     от клас .mw-show, който MW.tab() превключва. */
-  #mwSlot .mw-embedded { margin:0 0 .6rem 0 !important; }
-  #mwSlot .mw-embedded#statsCard,
-  #mwSlot .mw-embedded#oddsCard { display:none !important; }
-  #mwSlot .mw-embedded#statsCard.mw-show,
-  #mwSlot .mw-embedded#oddsCard.mw-show { display:block !important; }
-  #mwSlot .mw-embedded#oaProbsModal { position:static !important; background:none !important;
-    inset:auto !important; padding:0 !important; z-index:auto !important; display:none !important; }
-  #mwSlot .mw-embedded#oaProbsModal.mw-show { display:block !important; }
-  #mwSlot .mw-embedded#oaProbsModal > div { max-width:100% !important; box-shadow:none !important; }
-  #mwSlot .mw-embedded#resCard { display:none !important; }
-  #mwSlot .mw-embedded#resCard.mw-show { display:block !important; }
+     показването им става с inline !important (виж mwShow/mwHide в JS),
+     не през CSS класове. */
+  .mw-embedded { margin:0 0 .6rem 0 !important; }
+  #mwOaEdit .mw-embedded#oaProbsModal { position:static !important; background:none !important;
+    inset:auto !important; padding:0 !important; z-index:auto !important; }
+  #mwOaEdit .mw-embedded#oaProbsModal > div { max-width:100% !important; box-shadow:none !important; }
 
   .mw-dock { background:#07101f; border:1px solid rgba(56,189,248,.3); border-radius:12px;
     padding:.8rem; margin:.5rem 0 1rem; box-shadow:0 6px 20px rgba(0,0,0,.3) }
@@ -1790,14 +1784,9 @@ input::placeholder, textarea::placeholder {
     margin-bottom:.6rem; font-size:.78rem; font-weight:700; color:var(--acc) }
   .mw-header .mw-close { background:rgba(255,255,255,.06); border:1px solid var(--bord);
     color:var(--dim); border-radius:7px; padding:2px 10px; font-size:1rem; cursor:pointer }
-  .mw-tabs { display:flex; gap:.35rem; margin-bottom:.7rem; flex-wrap:wrap }
-  .mw-tab { flex:1 1 30%; padding:8px 6px; font-size:.68rem; font-weight:600;
-    background:rgba(255,255,255,.04); border:1px solid var(--bord); color:var(--dim);
-    border-radius:8px; cursor:pointer; touch-action:manipulation; white-space:nowrap }
-  .mw-tab.active { background:rgba(56,189,248,.15); border-color:rgba(56,189,248,.5); color:var(--acc) }
-  .mw-slot { margin-bottom:.7rem }
-  .mw-actions { margin-bottom:.6rem }
-  .mw-result { background:#0a1429; border:1px solid rgba(52,211,153,.3); border-radius:9px; padding:.7rem }
+  .mw-calc-btn { width:100%; margin-bottom:.7rem }
+  .mw-result { background:#0a1429; border:1px solid rgba(52,211,153,.3); border-radius:9px;
+    padding:.7rem; margin-bottom:.7rem }
   .mw-result-row { display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.5rem }
   .mw-chip { background:rgba(255,255,255,.06); border:1px solid var(--bord); border-radius:6px;
     padding:3px 8px; font-size:.7rem; color:var(--txt) }
@@ -1809,9 +1798,19 @@ input::placeholder, textarea::placeholder {
     color:var(--grn); background:rgba(52,211,153,.12); border:1px solid rgba(52,211,153,.35);
     border-radius:5px; padding:1px 6px }
 
+  /* ── Accordion секции: затворени по подразбиране, компактен summary ── */
+  .mw-acc { border:1px solid var(--bord); border-radius:10px; margin-bottom:.6rem; overflow:hidden }
+  .mw-acc-hdr { display:flex; justify-content:space-between; align-items:center;
+    padding:.6rem .8rem; background:rgba(255,255,255,.03); cursor:pointer;
+    font-size:.75rem; font-weight:700; color:var(--txt); touch-action:manipulation }
+  .mw-acc-hdr:active { background:rgba(56,189,248,.08) }
+  .mw-chevron { color:var(--dim); font-size:.7rem; transition:transform .15s }
+  .mw-acc-summary { padding:.55rem .8rem .7rem }
+  .mw-acc-edit { padding:.7rem .8rem .8rem; border-top:1px solid var(--bord) }
+  .mw-empty { font-size:.65rem; color:var(--dim); text-align:center; padding:.3rem 0 }
+  .mw-save-btn { width:100%; margin-top:.7rem }
+
   /* ── Красив read-only stats summary (стил FootyStats) ── */
-  #mwStatsSummary { background:#0a1429; border:1px solid var(--bord); border-radius:10px;
-    padding:.6rem .8rem; margin:.6rem 0; display:none }
   .mw-sum-hdr { display:grid; grid-template-columns:1fr 1.4fr 1fr; text-align:center;
     font-size:.62rem; font-weight:700; color:var(--acc); text-transform:uppercase;
     letter-spacing:.5px; padding-bottom:.45rem; border-bottom:1px solid var(--bord);
@@ -2197,7 +2196,7 @@ input::placeholder, textarea::placeholder {
   <div class="card-btn-row">
     <button class="btn btn-sec" onclick="openPasteStats()"
       style="background:rgba(56,189,248,.1)">📋 Paste Stats</button>
-    <button class="btn btn-sec" onclick="if(typeof MW!=='undefined'&&MW.tab){MW.tab('oa');document.querySelectorAll('#mwDock .mw-tab').forEach(function(b){b.classList.toggle('active',b.getAttribute('data-tab')==='oa');});}else{openPasteOAProbs();}"
+    <button class="btn btn-sec" onclick="if(typeof MW!=='undefined'&&MW.toggle){MW.toggle('oa');}else{openPasteOAProbs();}"
       style="background:rgba(167,139,250,.12);border-color:rgba(167,139,250,.3);color:var(--pur)">
       🎯 OA Вероятности</button>
     <button class="btn btn-sec" onclick="openH2HModal()"
@@ -3067,12 +3066,16 @@ input::placeholder, textarea::placeholder {
   <div id="fxBrowserPanel" style="display:none">
 
     
-    <!-- ── Paste Fixtures ── -->
+    <!-- ── Paste Fixtures (сгъваемо — не бута списъка надолу) ── -->
     <div style="margin-bottom:.8rem">
-      <div style="font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.4rem">
-        📋 Постави мачове от програмата
+      <div id="fxPasteHdr" onclick="fxTogglePasteBox()"
+        style="display:flex;align-items:center;gap:.4rem;cursor:pointer;
+        font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.4rem;
+        touch-action:manipulation">
+        <span>📋 Постави мачове от програмата</span>
+        <span id="fxPasteArrow" style="margin-left:auto;color:var(--dim)">▶</span>
       </div>
-      
+      <div id="fxPasteBody" style="display:none">
       <!-- Дата за мачовете -->
       <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.5rem;
         background:#07101f;border-radius:7px;padding:.5rem .7rem">
@@ -3094,6 +3097,7 @@ input::placeholder, textarea::placeholder {
           ⚡ Импортирай мачовете
         </button>
         <button class="btn btn-del btn-del-icon" onclick="fxClearPasted()" title="Изчисти">🗑</button>
+      </div>
       </div>
     </div>
 
@@ -14690,11 +14694,15 @@ function oaSaveProbsAndClose() {
     return el && el.value !== '' && el.value !== null;
   }).length;
   if (st) {
-    st.innerHTML = '💾 <strong>Запазени ' + filled + ' пазара</strong> — модалът се затваря...';
+    st.innerHTML = '💾 <strong>Запазени ' + filled + ' пазара</strong>';
     st.style.color = 'var(--grn)';
     st.style.borderColor = 'rgba(74,222,128,.5)';
   }
-  setTimeout(closeOAProbs, 600);
+  if (typeof MW !== 'undefined' && MW.collapse && document.getElementById('mwOaEdit')) {
+    MW.collapse('oa');
+  } else {
+    setTimeout(closeOAProbs, 600);
+  }
 }
 
 function parseAndApplyOAProbs() {
@@ -22552,6 +22560,12 @@ function fxImportPaste() {
   fxRenderPastedCountries();
   ta.value = '';
 
+  // ✅ Сгъваме "Постави" кутията след успешен импорт — фокус върху списъка
+  var pasteBody = document.getElementById('fxPasteBody');
+  if (pasteBody && pasteBody.style.display !== 'none') {
+    if (typeof fxTogglePasteBox === 'function') fxTogglePasteBox();
+  }
+
   // Показваме toggle бутоните + класификатор
   var tb = document.getElementById('fxToggleBtns');
   if (tb) tb.style.display = 'flex';
@@ -22993,6 +23007,10 @@ function calcValueBets(modelProbs, odds) {
 function fxClassifyMarkets() {
   Object.keys(FX_PASTED).forEach(function(country){
     FX_PASTED[country].forEach(function(m){
+      // ✅ Ако мачът вече има прогноза от РЕАЛНИЯ engine (calculate(), през
+      // match workspace), НЕ я презаписваме с бързия класификатор — иначе
+      // при всяко презареждане резултатът за BetPro тихо се сменя обратно.
+      if (m._fullCalc) return;
       var s = m.stats || {};
       // Подаваме и league info ако имаме
       if (m.league) s.league_name = m.league;
@@ -23082,6 +23100,16 @@ function fxToggleAI() {
   if (p) p.style.display = p.style.display === 'none' ? 'block' : 'none';
   if (fp && p && p.style.display === 'block') fp.style.display = 'none';
 }
+// ── Сгъваема "Постави мачове" кутия — не пречи на списъка ──
+function fxTogglePasteBox() {
+  var body  = document.getElementById('fxPasteBody');
+  var arrow = document.getElementById('fxPasteArrow');
+  if (!body) return;
+  var open = body.style.display !== 'none';
+  body.style.display = open ? 'none' : 'block';
+  if (arrow) arrow.textContent = open ? '▶' : '▼';
+}
+
 function fxToggleFilters() {
   var p = document.getElementById('fxFiltersPanel');
   var ap = document.getElementById('fxAIPanel');
@@ -24232,6 +24260,10 @@ function loadTheme() {
     // ✅ Auto-detection: ако някои импортирани мачове имат резултати, попълни ги в лога
     if (typeof fxMarkLoggedFixtures === 'function') fxMarkLoggedFixtures();
     if (typeof fxAutoMatchResults === 'function') fxAutoMatchResults();
+    // ✅ Вече има мачове → "Постави" кутията остава сгъната, списъкът се вижда веднага
+  } else {
+    // Няма мачове все още → отваряме "Постави" кутията по подразбиране
+    if (typeof fxTogglePasteBox === 'function') fxTogglePasteBox();
   }
 
   // Set today's date in the date picker
@@ -25509,70 +25541,96 @@ function mwShow(el)  { if (el) el.style.setProperty('display','block','important
 function mwHide(el)  { if (el) el.style.setProperty('display','none','important'); }
 
 // ── Създава (веднъж) dock контейнера с 3-те таба ──
+function mwCap(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+// Кои accordion секции са отворени в момента (per match, reset при отваряне)
+var MW_OPEN_SECTIONS = { stats:false, oa:false, odds:false };
+
+// ── Създава (веднъж) dock контейнера — 3 затворени по подразбиране
+// accordion секции + винаги видим "Изчисли" бутон ──
 function mwEnsureDock() {
   if (MW_DOCK) return MW_DOCK;
   var dock = document.createElement('div');
   dock.id = 'mwDock';
   dock.className = 'mw-dock';
   dock.setAttribute('onclick','event.stopPropagation()');
+
+  function section(key, icon, label) {
+    return '' +
+    '<div class="mw-acc">' +
+      '<div class="mw-acc-hdr" onclick="MW.toggle(\'' + key + '\')">' +
+        '<span>' + icon + ' ' + label + '</span>' +
+        '<span class="mw-chevron" id="mwChev' + mwCap(key) + '">▶</span>' +
+      '</div>' +
+      '<div id="mw' + mwCap(key) + 'Summary" class="mw-acc-summary"></div>' +
+      '<div id="mw' + mwCap(key) + 'Edit" class="mw-acc-edit" style="display:none"></div>' +
+    '</div>';
+  }
+
   dock.innerHTML =
     '<div class="mw-header">' +
-      '<span id="mwTitle">✏️ Редактираш мач</span>' +
+      '<span id="mwTitle">✏️ Мач</span>' +
       '<button type="button" class="mw-close" onclick="MW.close()">✕ Затвори</button>' +
     '</div>' +
-    '<div class="mw-tabs">' +
-      '<button type="button" class="mw-tab active" data-tab="stats" onclick="MW.tab(\'stats\')">📊 Статистика</button>' +
-      '<button type="button" class="mw-tab" data-tab="oa" onclick="MW.tab(\'oa\')">🎯 OA Вероятности</button>' +
-      '<button type="button" class="mw-tab" data-tab="odds" onclick="MW.tab(\'odds\')">🎰 Коефициенти</button>' +
-    '</div>' +
-    '<div class="mw-slot" id="mwSlot">' +
-      '<div id="mwStatsSlot"></div>' +
-      '<div id="mwOaSlot"></div>' +
-      '<div id="mwOddsSlot"></div>' +
-    '</div>' +
-    '<div class="mw-actions">' +
-      '<button type="button" class="btn btn-p btn-action" onclick="MW.calc()" style="width:100%">⚡ Изчисли вероятността</button>' +
-    '</div>' +
-    '<div id="mwResultBox" class="mw-result" style="display:none"></div>';
+    '<div id="mwResultBox" class="mw-result" style="display:none"></div>' +
+    '<button type="button" class="btn btn-p btn-action mw-calc-btn" onclick="MW.calc()">⚡ Изчисли вероятността</button>' +
+    section('stats', '📊', 'Статистика') +
+    section('oa',    '🎯', 'OA Вероятности') +
+    section('odds',  '🎰', 'Коефициенти');
+
   MW_DOCK = dock;
   return dock;
 }
 
+// ── Монтира реалните engine панели (веднъж) вътре в edit слотовете ──
 function mwEmbedPanels() {
-  var statsSlot = document.getElementById('mwStatsSlot');
-  var oaSlot    = document.getElementById('mwOaSlot');
-  var oddsSlot  = document.getElementById('mwOddsSlot');
-  if (!statsSlot) return;
+  var statsEdit = document.getElementById('mwStatsEdit');
+  var oaEdit    = document.getElementById('mwOaEdit');
+  var oddsEdit  = document.getElementById('mwOddsEdit');
+  if (!statsEdit) return;
 
-  // 📊 Статистика таб: paste картата ПЪРВА (детайлна статистика, стар стил),
-  // после красив read-only summary, после суровата мрежа от полета (свита).
   var pasteCard = document.getElementById('statsPasteCard');
   var statsCard = document.getElementById('statsCard');
-  if (pasteCard) { pasteCard.classList.add('mw-embedded'); statsSlot.appendChild(pasteCard); }
-  if (!document.getElementById('mwStatsSummary')) {
-    var summary = document.createElement('div');
-    summary.id = 'mwStatsSummary';
-    statsSlot.appendChild(summary);
-  } else {
-    statsSlot.appendChild(document.getElementById('mwStatsSummary'));
+  if (pasteCard && pasteCard.parentNode !== statsEdit) {
+    pasteCard.classList.add('mw-embedded');
+    statsEdit.appendChild(pasteCard);
   }
-  if (statsCard) { statsCard.classList.add('mw-embedded'); statsSlot.appendChild(statsCard); }
+  if (statsCard && statsCard.parentNode !== statsEdit) {
+    statsCard.classList.add('mw-embedded');
+    statsEdit.appendChild(statsCard);
+  }
+  if (!document.getElementById('mwStatsSaveBtn')) {
+    var sBtn = document.createElement('button');
+    sBtn.type = 'button'; sBtn.id = 'mwStatsSaveBtn'; sBtn.className = 'btn btn-p btn-action mw-save-btn';
+    sBtn.textContent = '💾 Запази и затвори';
+    sBtn.onclick = function(){ mwSaveSection('stats'); };
+    statsEdit.appendChild(sBtn);
+  }
+  mwCollapseRawFields(true);
 
   var oaModal = document.getElementById('oaProbsModal');
-  if (oaModal) { oaModal.classList.add('mw-embedded'); oaSlot.appendChild(oaModal); }
+  if (oaModal && oaModal.parentNode !== oaEdit) {
+    oaModal.classList.add('mw-embedded');
+    oaEdit.appendChild(oaModal);
+  }
+  mwShow(oaModal);
 
   var oddsCard = document.getElementById('oddsCard');
-  if (oddsCard) { oddsCard.classList.add('mw-embedded'); oddsSlot.appendChild(oddsCard); }
-
-  var resCard = document.getElementById('resCard');
-  if (resCard) { resCard.classList.add('mw-embedded'); document.getElementById('mwResultBox').parentNode.appendChild(resCard); mwHide(resCard); }
+  if (oddsCard && oddsCard.parentNode !== oddsEdit) {
+    oddsCard.classList.add('mw-embedded');
+    oddsEdit.appendChild(oddsCard);
+  }
+  mwShow(oddsCard);
+  if (!document.getElementById('mwOddsSaveBtn')) {
+    var oBtn = document.createElement('button');
+    oBtn.type = 'button'; oBtn.id = 'mwOddsSaveBtn'; oBtn.className = 'btn btn-p btn-action mw-save-btn';
+    oBtn.textContent = '💾 Запази и затвори';
+    oBtn.onclick = function(){ mwSaveSection('odds'); };
+    oddsEdit.appendChild(oBtn);
+  }
 
   var sp = document.getElementById('statsPanel'); if (sp) mwShow(sp);
   var op = document.getElementById('oddsPanel');  if (op) mwShow(op);
-
-  // Суровата мрежа с полета (statsCard) е свита по подразбиране —
-  // достъпна през "✏️ Ръчна редакция", а не показвана директно.
-  mwCollapseRawFields(true);
 }
 
 function mwCollapseRawFields(collapsed) {
@@ -25593,8 +25651,7 @@ function mwCollapseRawFields(collapsed) {
   if (collapsed) mwHide(statsCard); else mwShow(statsCard);
 }
 
-// ── Красив read-only summary (Домакин/Гост), генериран от вече
-// попълнените h_*/a_* полета — вместо суровите квадратчета. ──
+// ── Компактни read-only summaries, показвани когато секцията е затворена ──
 var MW_SUMMARY_ROWS = [
   ['h_po','a_po','Позиция'], ['h_mp','a_mp','Изиграни мачове'],
   ['h_win','a_win','Победи'], ['h_draw','a_draw','Равенства'], ['h_lost','a_lost','Загуби'],
@@ -25620,38 +25677,85 @@ function mwRenderStatsSummary() {
         '<div class="mw-sum-val">' + (av != null ? av : '—') + '</div>' +
       '</div>';
   });
-  if (!rows) { box.innerHTML = ''; box.style.display = 'none'; return; }
-  box.style.display = 'block';
+  if (!rows) { box.innerHTML = '<div class="mw-empty">Няма въведена статистика — отвори секцията, за да добавиш.</div>'; return; }
   box.innerHTML =
     '<div class="mw-sum-hdr"><span>🏠 Домакин</span><span>Статистика</span><span>Гост ✈️</span></div>' +
     rows;
 }
 window.mwRenderStatsSummary = mwRenderStatsSummary;
 
-function mwShowTab(tab) {
-  document.querySelectorAll('#mwDock .mw-tab').forEach(function(b){
-    b.classList.toggle('active', b.getAttribute('data-tab') === tab);
-  });
-  var statsSlot = document.getElementById('mwStatsSlot');
-  var oaSlot    = document.getElementById('mwOaSlot');
-  var oddsSlot  = document.getElementById('mwOddsSlot');
-  if (statsSlot) statsSlot.style.display = (tab==='stats') ? '' : 'none';
-  if (oaSlot)    oaSlot.style.display    = (tab==='oa')    ? '' : 'none';
-  if (oddsSlot)  oddsSlot.style.display  = (tab==='odds')  ? '' : 'none';
-  var oaModal = document.getElementById('oaProbsModal');
-  var oddsCard = document.getElementById('oddsCard');
-  var pasteCard = document.getElementById('statsPasteCard');
-  var statsCard = document.getElementById('statsCard');
-  if (tab==='oa')    mwShow(oaModal);   else mwHide(oaModal);
-  if (tab==='odds')  mwShow(oddsCard);  else mwHide(oddsCard);
-  if (tab==='stats') { mwShow(pasteCard); if (statsCard && statsCard.getAttribute('data-mw-collapsed') !== '1') mwShow(statsCard); }
-  else { mwHide(pasteCard); mwHide(statsCard); }
+function mwChipRow(pairs) {
+  var chips = pairs.filter(function(p){ return p[1] != null && p[1] !== ''; })
+    .map(function(p){ return '<span class="mw-chip">' + p[0] + ': ' + p[1] + '</span>'; });
+  return chips.length ? '<div class="mw-result-row">' + chips.join('') + '</div>' : null;
 }
+
+function mwRenderOaSummary() {
+  var box = document.getElementById('mwOaSummary');
+  if (!box) return;
+  function v(id){ var el = document.getElementById(id); return el && el.value !== '' ? el.value + '%' : null; }
+  var row = mwChipRow([
+    ['1', v('oa_home')], ['X', v('oa_draw')], ['2', v('oa_away')],
+    ['O2.5', v('oa_o25')], ['U2.5', v('oa_u25')],
+    ['BTTS', v('oa_btts')]
+  ]);
+  box.innerHTML = row || '<div class="mw-empty">Няма въведени OA вероятности — отвори секцията, за да добавиш.</div>';
+}
+window.mwRenderOaSummary = mwRenderOaSummary;
+
+function mwRenderOddsSummary() {
+  var box = document.getElementById('mwOddsSummary');
+  if (!box) return;
+  function v(id){ var el = document.getElementById(id); return el && el.value !== '' ? el.value : null; }
+  var row = mwChipRow([
+    ['1', v('b1')], ['X', v('bx')], ['2', v('b2')],
+    ['O2.5', v('bo')], ['U2.5', v('bu')],
+    ['BTTS', v('bb')]
+  ]);
+  box.innerHTML = row || '<div class="mw-empty">Няма въведени коефициенти — отвори секцията, за да добавиш.</div>';
+}
+window.mwRenderOddsSummary = mwRenderOddsSummary;
+
+function mwRenderAllSummaries() {
+  mwRenderStatsSummary();
+  mwRenderOaSummary();
+  mwRenderOddsSummary();
+}
+
+// ── Отваря/затваря конкретна accordion секция ──
+function mwExpandSection(key) {
+  var edit = document.getElementById('mw' + mwCap(key) + 'Edit');
+  var sum  = document.getElementById('mw' + mwCap(key) + 'Summary');
+  var chev = document.getElementById('mwChev' + mwCap(key));
+  if (edit) edit.style.display = 'block';
+  if (sum)  sum.style.display  = 'none';
+  if (chev) chev.textContent   = '▼';
+  MW_OPEN_SECTIONS[key] = true;
+}
+function mwCollapseSection(key) {
+  if (MW_ACTIVE_KEY) mwCapture(MW_ACTIVE_KEY);
+  if (key === 'stats') mwRenderStatsSummary();
+  else if (key === 'oa') mwRenderOaSummary();
+  else if (key === 'odds') mwRenderOddsSummary();
+  var edit = document.getElementById('mw' + mwCap(key) + 'Edit');
+  var sum  = document.getElementById('mw' + mwCap(key) + 'Summary');
+  var chev = document.getElementById('mwChev' + mwCap(key));
+  if (edit) edit.style.display = 'none';
+  if (sum)  sum.style.display  = 'block';
+  if (chev) chev.textContent   = '▶';
+  MW_OPEN_SECTIONS[key] = false;
+}
+function mwToggleSection(key) {
+  if (MW_OPEN_SECTIONS[key]) mwCollapseSection(key);
+  else mwExpandSection(key);
+}
+function mwSaveSection(key) { mwCollapseSection(key); }
 
 function mwFinishOpen(key, rowEl, m, dock) {
   mwRestore(key);
   mwEmbedPanels();
-  mwRenderStatsSummary();
+  MW_OPEN_SECTIONS = { stats:false, oa:false, odds:false };
+  ['stats','oa','odds'].forEach(function(k){ mwCollapseSection(k); }); // старт: всичко затворено, компактно
   var titleEl = document.getElementById('mwTitle');
   if (titleEl) titleEl.textContent = '✏️ ' + (m.home||'') + ' vs ' + (m.away||'');
 
@@ -25666,17 +25770,10 @@ function mwFinishOpen(key, rowEl, m, dock) {
     }
   }
 
-  // ── Закачаме dock-а НАЙ-ОТГОРЕ на fixtures списъка (не inline до реда) ──
-  var anchor = document.getElementById('fxPastedCountries');
-  if (anchor && anchor.parentNode) {
-    anchor.parentNode.insertBefore(dock, anchor);
-  } else {
-    rowEl.parentNode.insertBefore(dock, rowEl.nextSibling);
-  }
-  mwShowTab('stats');
-  var scrollHost = document.getElementById('fxBrowserCard') || document.body;
-  scrollHost.scrollIntoView({behavior:'smooth', block:'start'});
-  window.scrollTo({top:0, behavior:'smooth'});
+  // ── Вмъкваме dock-а INLINE, точно след кликнатия ред — списъкът
+  // остава на мястото си, не се налага скрол до върха. ──
+  rowEl.parentNode.insertBefore(dock, rowEl.nextSibling);
+  dock.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
 // ── Отваря/затваря работния плот за конкретен мач ──
@@ -25686,7 +25783,7 @@ function mwOpen(rowEl, country, idx) {
   if (!m) return;
 
   var dock = mwEnsureDock();
-  var isSameOpen = (MW_ACTIVE_KEY === key) && document.body.contains(dock);
+  var isSameOpen = (MW_ACTIVE_KEY === key) && document.body.contains(dock) && rowEl.nextElementSibling === dock;
 
   if (MW_ACTIVE_KEY && MW_ACTIVE_KEY !== key) mwCapture(MW_ACTIVE_KEY);
 
@@ -25727,7 +25824,10 @@ function mwClose() {
   MW_ACTIVE_KEY = null;
 }
 
-// ── Изчисли вероятността — реалният engine (calculate()), непроменен ──
+// ── Изчисли вероятността — реалният engine (calculate()), непроменен.
+// Резултатът се записва И върху самия мач (m.modelProbs/topMarket), за
+// да може публикуването към BetPro да го намери — преди това пращаше
+// само бързия класификатор, а не резултата от Calculate тук. ──
 function mwCalc() {
   if (!MW_ACTIVE_KEY) return;
   mwCapture(MW_ACTIVE_KEY);
@@ -25771,10 +25871,47 @@ function mwCalc() {
   };
   mwSave();
   mwRenderRowBadge(MW_ACTIVE_KEY);
+  mwRenderAllSummaries();
 
-  var resCard = document.getElementById('resCard');
-  if (resCard) mwShow(resCard);
-  mwRenderStatsSummary();
+  // ✅ КРИТИЧНО: записваме резултата от РЕАЛНИЯ engine върху самия match
+  // обект (m.modelProbs/topMarket/valueBets) — без това публикуването
+  // към BetPro не намираше прогноза (то гледаше само бързия класификатор
+  // от fxClassifyMarkets, който никога не се пълнеше от Calculate тук).
+  var parts = MW_ACTIVE_KEY.split('|');
+  var country = parts[0], idx = parseInt(parts.slice(1).join('|'), 10);
+  var m = (FX_PASTED[country] || [])[idx];
+  if (m) {
+    m._fullCalc = true;
+    m.modelProbs = {
+      p1: CC.pH*100, pX: CC.pD*100, p2: CC.pA*100,
+      pO25: CC.pO*100, pU25: CC.pU*100,
+      pBTTS: CC.pB*100, pBTTSno: (1-CC.pB)*100,
+      lambdaH: CC.lambdaH || 0, lambdaA: CC.lambdaA || 0
+    };
+    if (best) {
+      var probMap = { '1':CC.pH*100, 'X':CC.pD*100, '2':CC.pA*100, 'O2.5':CC.pO*100, 'U2.5':CC.pU*100, 'BTTS':CC.pB*100 };
+      m.topMarket = { mkt: best[0], prob: probMap[best[0]] != null ? probMap[best[0]] : 50, conf: 99, col: 'var(--acc)' };
+    }
+    // Value bets спрямо реално въведените коефициенти (b1/bx/b2/bo/bu/bb)
+    if (typeof calcValueBets === 'function') {
+      var oddsNow = {
+        home: document.getElementById('b1') && document.getElementById('b1').value,
+        draw: document.getElementById('bx') && document.getElementById('bx').value,
+        away: document.getElementById('b2') && document.getElementById('b2').value,
+        over25: document.getElementById('bo') && document.getElementById('bo').value,
+        under25: document.getElementById('bu') && document.getElementById('bu').value,
+        btts: document.getElementById('bb') && document.getElementById('bb').value
+      };
+      try { m.valueBets = calcValueBets(m.modelProbs, oddsNow); } catch(e){}
+    }
+    // Публикуваме веднага (не debounced) — за да се появи в BetPro без забавяне
+    if (typeof persistFxPasted === 'function') persistFxPasted();
+    if (typeof cloudFxPublishToPublic === 'function') {
+      cloudFxPublishToPublic().then(function(ok){
+        if (ok && typeof showToast === 'function') showToast('📤 Прогнозата е публикувана в BetPro', 'success');
+      }).catch(function(e){ console.warn('[mwCalc] BetPro publish failed:', e.message); });
+    }
+  }
 }
 
 function mwFindRow(key) {
@@ -25805,11 +25942,11 @@ function mwRenderAllBadges() {
   Object.keys(MW_STATE).forEach(function(key){ mwRenderRowBadge(key); });
 }
 
-window.MW = { open: mwOpen, close: mwClose, tab: mwShowTab, calc: mwCalc, renderBadges: mwRenderAllBadges };
+window.MW = { open: mwOpen, close: mwClose, toggle: mwToggleSection, collapse: mwCollapseSection, calc: mwCalc, renderBadges: mwRenderAllBadges };
 window.fxOpenMatchWorkspace = mwOpen;
 
 // След всяко (пре)рендиране на списъка (fxToggleCountry/fxApplySearch и т.н.)
-// презалепваме запазените badges — leке подход: наблюдаваме DOM промени в списъка.
+// презалепваме запазените badges.
 var _mwListEl = null;
 function mwObserveList() {
   var el = document.getElementById('fxPastedCountries');
@@ -25820,6 +25957,7 @@ function mwObserveList() {
 }
 document.addEventListener('DOMContentLoaded', function(){ mwObserveList(); setTimeout(mwRenderAllBadges, 600); });
 setInterval(mwObserveList, 2000);
+
 
 })();
 </script>
