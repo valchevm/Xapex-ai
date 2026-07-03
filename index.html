@@ -22217,18 +22217,9 @@ async function cloudFxPublishToPublic() {
     return false;
   }
 
-  // ── STEP 1: Cleanup expired rows (GET expired по ID, после DELETE) ──
-  try {
-    var nowIso = new Date().toISOString();
-    var expd = await oraFetch(PUBLIC_FX_TABLE, 'GET', null,
-      'q=' + encodeURIComponent(JSON.stringify({expires_at: {"$lt": nowIso}})) + '&fields=id&limit=500');
-    var expItems = expd && expd.items ? expd.items : [];
-    var delBase = ORA_BASE();
-    for (var ei = 0; ei < expItems.length; ei++) {
-      await fetch(delBase + '/' + PUBLIC_FX_TABLE + '/' + expItems[ei].id, { method: 'DELETE' });
-    }
-    if (expItems.length) console.log('[publicFx] изтрити', expItems.length, 'expired');
-  } catch(e) { /* swallow */ }
+  // ✅ STEP 1 (cleanup на expired редове) вече се случва server-side
+  // във /api/publish-fixtures — премахнат оттук за да избегнем директен
+  // client→Oracle fetch (CORS "Failed to fetch").
 
   // ── STEP 2: Build payload ──
   var rows = [];
@@ -22360,51 +22351,28 @@ async function cloudFxPublishToPublic() {
 
   if (rows.length === 0) return false;
 
-  // ── STEP 3: Oracle per-row upsert (GET по fixture_id → PUT или POST) ──
-  var base = ORA_BASE();
+  // ── STEP 3: Публикуваме през server-side proxy (/api/publish-fixtures) —
+  // избягва директен client→Oracle fetch, който гърмеше с CORS "Failed to
+  // fetch". Server-to-server заявките в proxy-то не подлежат на browser CORS.
   var okCount = 0;
-  for (var ri = 0; ri < rows.length; ri++) {
-    var row = rows[ri];
-    try {
-      // Намираме съществуващ по fixture_id
-      var existing = await oraFetch(PUBLIC_FX_TABLE, 'GET', null,
-        'q=' + encodeURIComponent(JSON.stringify({fixture_id: row.fixture_id})));
-      var items = existing && existing.items ? existing.items : [];
-      if (items.length > 0) {
-        // Update — не пращаме created_at/expires_at (запазваме оригинала)
-        var updRow = Object.assign({}, row);
-        delete updRow.created_at;
-        delete updRow.expires_at;
-        var r = await fetch(base + '/' + PUBLIC_FX_TABLE + '/' + items[0].id, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(updRow)
-        });
-        if (r.ok) okCount++;
-        else {
-          var etxt = await r.text().catch(function(){ return ''; });
-          errors.push(row.fixture_id + ': HTTP ' + r.status + ' (PUT) ' + etxt.slice(0,150));
-        }
-      } else {
-        // Insert нов — с TTL (kickoff+120мин fallback ако липсва)
-        if (!row.expires_at) row.expires_at = oraTs(Date.now() + PUBLIC_FX_LINGER_MIN * 60 * 1000);
-        if (!row.created_at) row.created_at = oraTs(Date.now());
-        var r2 = await fetch(base + '/' + PUBLIC_FX_TABLE + '/', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(row)
-        });
-        if (r2.ok) okCount++;
-        else {
-          var etxt2 = await r2.text().catch(function(){ return ''; });
-          errors.push(row.fixture_id + ': HTTP ' + r2.status + ' (POST) ' + etxt2.slice(0,150));
-        }
-      }
-    } catch(e) {
-      console.warn('[publicFx] row fail', row.fixture_id, e.message);
-      errors.push(row.fixture_id + ': ' + e.message);
+  try {
+    var resp = await fetch('/api/publish-fixtures', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rows: rows })
+    });
+    var data = await resp.json().catch(function(){ return null; });
+    if (!resp.ok || !data) {
+      errors.push('Proxy HTTP ' + resp.status + (data && data.message ? ': ' + data.message : ''));
+    } else {
+      okCount = data.count || 0;
+      if (Array.isArray(data.errors) && data.errors.length) errors = errors.concat(data.errors);
     }
+  } catch(e) {
+    console.warn('[publicFx] proxy fetch failed', e.message);
+    errors.push('Proxy connection: ' + e.message);
   }
+
   console.log('[publicFx] ✓ ' + okCount + '/' + rows.length + ' fixtures публикувани в Oracle');
   if (skipped.length) {
     console.warn('[publicFx] ⚠ Пропуснати (без прогноза от модела):', skipped);
