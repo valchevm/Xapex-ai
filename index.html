@@ -25717,10 +25717,14 @@ function mwEditCell(cellEl) {
   });
   input.addEventListener('click', function(e){ e.stopPropagation(); });
 }
+// ✅ Capture phase (третият параметър true) — dock-ът има собствен
+// onclick="event.stopPropagation()" на bubble фаза, който спираше този
+// listener преди изобщо да стигне до document. Capture фазата тръгва
+// ОТГОРЕ надолу и се изпълнява ПРЕДИ dock-ът да спре bubbling-а.
 document.addEventListener('click', function(e){
   var cell = e.target.closest && e.target.closest('#mwStatsSummary .mw-sum-val');
-  if (cell) { e.stopPropagation(); mwEditCell(cell); }
-});
+  if (cell) { mwEditCell(cell); }
+}, true);
 
 function mwChipRow(pairs) {
   var chips = pairs.filter(function(p){ return p[1] != null && p[1] !== ''; })
@@ -25795,7 +25799,11 @@ function mwExpandSection(key) {
     var el = document.getElementById(id);
     if (el) mwShow(el);
   });
-  if (key === 'stats') mwRenderStatsSummary();
+  if (key === 'stats') {
+    var pc = document.getElementById('statsPasteCard');
+    if (pc) mwShow(pc);
+    mwRenderStatsSummary();
+  }
   else if (key === 'h2h') mwRenderH2hSummary();
   MW_OPEN_SECTIONS[key] = true;
 }
