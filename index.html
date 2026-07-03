@@ -1766,6 +1766,15 @@ input::placeholder, textarea::placeholder {
   body.in-screen .nav-card:not(.active) { display:none !important; }
   body.in-screen .nav-card.active { display:block !important; }
 
+  /* ✅ БЕЗУСЛОВНА защита: statsCard/oddsCard/statsPasteCard вече живеят
+     ИЗКЛЮЧИТЕЛНО вътре в match workspace accordion-а (mwEmbedPanels).
+     По-горните .nav-card правила важат само за body:not(.in-screen) или
+     :not(.active) — но докато си на ДРУГ екран (напр. Fixtures), нито
+     едно от двете не се прилага и картите изтичат на заден фон. Затова
+     тук ги крием безусловно; mwShow() (inline !important) винаги ги
+     разкрива коректно, когато потребителят реално отвори секцията. */
+  #statsCard, #oddsCard, #statsPasteCard { display:none !important; }
+
   /* ═══ MATCH WORKSPACE (fixtures-centric UI, accordion) ═══
      statsCard/oddsCard/oaProbsModal се "докват" вътре в edit слотовете
      на затворени по подразбиране accordion секции. ВАЖНО:
@@ -25595,6 +25604,7 @@ function mwEmbedPanels() {
     pasteCard.classList.add('mw-embedded');
     statsEdit.appendChild(pasteCard);
   }
+  mwShow(pasteCard);
   if (statsCard && statsCard.parentNode !== statsEdit) {
     statsCard.classList.add('mw-embedded');
     statsEdit.appendChild(statsCard);
