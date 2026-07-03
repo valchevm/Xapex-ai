@@ -58,9 +58,10 @@ export default async function handler(req, res) {
           const updRow = { ...row };
           delete updRow.created_at;
           delete updRow.expires_at;
-          const r = await oraFetch(`/${TABLE}/${items[0].id}`, "PUT", updRow);
+          const putId = items[0].id != null ? items[0].id : items[0].fixture_id;
+          const r = await oraFetch(`/${TABLE}/${putId}`, "PUT", updRow);
           if (r.ok) okCount++;
-          else errors.push(`${row.fixture_id}: HTTP ${r.status} (PUT) ${r.text.slice(0, 150)}`);
+          else errors.push(`${row.fixture_id}: HTTP ${r.status} (PUT id=${putId}) rowKeys=[${Object.keys(items[0]).join(',')}] ${r.text.slice(0, 200)}`);
         } else {
           const r = await oraFetch(`/${TABLE}/`, "POST", row);
           if (r.ok) okCount++;
