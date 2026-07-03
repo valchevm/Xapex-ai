@@ -1790,6 +1790,16 @@ input::placeholder, textarea::placeholder {
   #mwOaEdit .mw-embedded#oaProbsModal { position:static !important; background:none !important;
     inset:auto !important; padding:0 !important; z-index:auto !important; }
   #mwOaEdit .mw-embedded#oaProbsModal > div { max-width:100% !important; box-shadow:none !important; }
+  #mwH2hEdit .mw-embedded#h2hModal { position:static !important; background:none !important;
+    inset:auto !important; padding:0 !important; z-index:auto !important; display:block !important; }
+  #mwH2hEdit .mw-embedded#h2hModal > div { max-width:100% !important; box-shadow:none !important; margin:0 !important; }
+
+  /* ── Inline-редактируеми клетки в таблицата статистика ── */
+  .mw-sum-val { cursor:pointer; border-radius:5px; transition:background .1s }
+  .mw-sum-val:active { background:rgba(56,189,248,.15) }
+  .mw-sum-val input { width:100%; background:#0a1429; border:1px solid var(--acc); border-radius:5px;
+    color:var(--acc); font-family:var(--mono); font-size:.8rem; font-weight:700; text-align:center;
+    padding:2px 0 }
 
   .mw-dock { background:#07101f; border:1px solid rgba(56,189,248,.3); border-radius:12px;
     padding:.8rem; margin:.5rem 0 1rem; box-shadow:0 6px 20px rgba(0,0,0,.3) }
@@ -25561,7 +25571,8 @@ function mwEnsureDock() {
     '<button type="button" class="btn btn-p btn-action mw-calc-btn" onclick="MW.calc()">⚡ Изчисли вероятността</button>' +
     section('stats', '📊', 'Статистика') +
     section('oa',    '🎯', 'OA Вероятности') +
-    section('odds',  '🎰', 'Коефициенти');
+    section('odds',  '🎰', 'Коефициенти') +
+    section('h2h',   '⚔️', 'H2H & Форма');
 
   MW_DOCK = dock;
   return dock;
@@ -25623,6 +25634,21 @@ function mwEmbedPanels() {
   }
 
   var op = document.getElementById('oddsPanel'); if (op) mwShow(op);
+
+  var h2hEdit = document.getElementById('mwH2hEdit');
+  var h2hModal = document.getElementById('h2hModal');
+  if (h2hEdit && h2hModal && h2hModal.parentNode !== h2hEdit) {
+    h2hModal.classList.add('mw-embedded');
+    h2hEdit.appendChild(h2hModal);
+  }
+  if (h2hEdit) mwShow(h2hModal);
+  if (h2hEdit && !document.getElementById('mwH2hSaveBtn')) {
+    var hBtn = document.createElement('button');
+    hBtn.type = 'button'; hBtn.id = 'mwH2hSaveBtn'; hBtn.className = 'btn btn-p btn-action mw-save-btn';
+    hBtn.textContent = '💾 Запази и затвори';
+    hBtn.onclick = function(){ mwSaveSection('h2h'); };
+    h2hEdit.appendChild(hBtn);
+  }
 }
 
 // ── Read-only summary — показва ВСИЧКИ налични статистики (не само
@@ -25651,17 +25677,50 @@ function mwRenderStatsSummary() {
     if (hv == null && av == null) return;
     rows +=
       '<div class="mw-sum-row">' +
-        '<div class="mw-sum-val">' + (hv != null ? hv : '—') + '</div>' +
+        '<div class="mw-sum-val" data-field="' + r[0] + '">' + (hv != null ? hv : '—') + '</div>' +
         '<div class="mw-sum-lbl">' + r[2] + '</div>' +
-        '<div class="mw-sum-val">' + (av != null ? av : '—') + '</div>' +
+        '<div class="mw-sum-val" data-field="' + r[1] + '">' + (av != null ? av : '—') + '</div>' +
       '</div>';
   });
   if (!rows) { box.innerHTML = '<div class="mw-empty">Няма въведена статистика — отвори секцията, за да добавиш.</div>'; return; }
   box.innerHTML =
     '<div class="mw-sum-hdr"><span>🏠 Домакин</span><span>Статистика</span><span>Гост ✈️</span></div>' +
-    rows;
+    rows +
+    '<div class="mw-empty" style="margin-top:.4rem">✏️ Кликни стойност, за да я коригираш</div>';
 }
 window.mwRenderStatsSummary = mwRenderStatsSummary;
+
+// ── Клик върху клетка от таблицата → inline редакция на подлежащото поле ──
+function mwEditCell(cellEl) {
+  var fieldId = cellEl.getAttribute('data-field');
+  if (!fieldId || cellEl.querySelector('input')) return;
+  var srcEl = document.getElementById(fieldId);
+  var curVal = srcEl ? srcEl.value : '';
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'decimal';
+  input.value = (curVal !== '—' && curVal !== '') ? curVal : '';
+  cellEl.textContent = '';
+  cellEl.appendChild(input);
+  input.focus();
+  input.select();
+  function commit() {
+    var v = input.value.trim();
+    if (srcEl) srcEl.value = v;
+    if (MW_ACTIVE_KEY) mwCapture(MW_ACTIVE_KEY);
+    mwRenderStatsSummary();
+  }
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { mwRenderStatsSummary(); }
+  });
+  input.addEventListener('click', function(e){ e.stopPropagation(); });
+}
+document.addEventListener('click', function(e){
+  var cell = e.target.closest && e.target.closest('#mwStatsSummary .mw-sum-val');
+  if (cell) { e.stopPropagation(); mwEditCell(cell); }
+});
 
 function mwChipRow(pairs) {
   var chips = pairs.filter(function(p){ return p[1] != null && p[1] !== ''; })
@@ -25695,10 +25754,29 @@ function mwRenderOddsSummary() {
 }
 window.mwRenderOddsSummary = mwRenderOddsSummary;
 
+function mwRenderH2hSummary() {
+  var box = document.getElementById('mwH2hSummary');
+  if (!box) return;
+  var h2hEl = document.getElementById('h2hPasteH2H');
+  var homeEl = document.getElementById('h2hPasteHome');
+  var awayEl = document.getElementById('h2hPasteAway');
+  var hasData = (h2hEl && h2hEl.value.trim()) || (homeEl && homeEl.value.trim()) || (awayEl && awayEl.value.trim());
+  var applied = (typeof H2H_DATA !== 'undefined' && H2H_DATA && H2H_DATA.applied);
+  if (applied) {
+    box.innerHTML = '<div class="mw-result-row"><span class="mw-chip" style="color:var(--grn);border-color:rgba(52,211,153,.4)">✅ Формата е приложена към модела</span></div>';
+  } else if (hasData) {
+    box.innerHTML = '<div class="mw-result-row"><span class="mw-chip">📋 Данни въведени — отвори за анализ</span></div>';
+  } else {
+    box.innerHTML = '<div class="mw-empty">Няма въведена форма/история — отвори секцията, за да добавиш.</div>';
+  }
+}
+window.mwRenderH2hSummary = mwRenderH2hSummary;
+
 function mwRenderAllSummaries() {
   mwRenderStatsSummary();
   mwRenderOaSummary();
   mwRenderOddsSummary();
+  mwRenderH2hSummary();
 }
 
 // ── Отваря/затваря конкретна accordion секция ──
@@ -25718,6 +25796,7 @@ function mwExpandSection(key) {
     if (el) mwShow(el);
   });
   if (key === 'stats') mwRenderStatsSummary();
+  else if (key === 'h2h') mwRenderH2hSummary();
   MW_OPEN_SECTIONS[key] = true;
 }
 // Директно съответствие secion key → реалните engine елементи, които
@@ -25726,7 +25805,8 @@ function mwExpandSection(key) {
 var MW_SECTION_CARDS = {
   stats: [],
   oa: ['oaProbsModal'],
-  odds: ['oddsCard']
+  odds: ['oddsCard'],
+  h2h: ['h2hModal']
 };
 function mwForceHideAllCards() {
   document.querySelectorAll('.mw-embedded').forEach(function(el){ mwHide(el); });
@@ -25737,6 +25817,7 @@ function mwCollapseSection(key) {
   if (key === 'stats') mwRenderStatsSummary();
   else if (key === 'oa') mwRenderOaSummary();
   else if (key === 'odds') mwRenderOddsSummary();
+  else if (key === 'h2h') mwRenderH2hSummary();
   var edit = document.getElementById('mw' + mwCap(key) + 'Edit');
   var sum  = document.getElementById('mw' + mwCap(key) + 'Summary');
   var chev = document.getElementById('mwChev' + mwCap(key));
@@ -25771,7 +25852,7 @@ function mwFinishOpen(key, rowEl, m, dock) {
   // engine карти, преди каквото и да е друго да се случи.
   mwForceHideAllCards();
   MW_OPEN_SECTIONS = { stats:false, oa:false, odds:false };
-  ['stats','oa','odds'].forEach(function(k){ mwCollapseSection(k); }); // старт: всичко затворено, компактно
+  ['stats','oa','odds','h2h'].forEach(function(k){ mwCollapseSection(k); }); // старт: всичко затворено, компактно
   var titleEl = document.getElementById('mwTitle');
   if (titleEl) titleEl.textContent = '✏️ ' + (m.home||'') + ' vs ' + (m.away||'');
 
