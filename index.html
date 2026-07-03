@@ -25753,6 +25753,13 @@ function mwSaveSection(key) { mwCollapseSection(key); }
 
 function mwFinishOpen(key, rowEl, m, dock) {
   mwRestore(key);
+
+  // ✅ КРИТИЧНО: dock-ът трябва да е ПРИКАЧЕН към документа ПРЕДИ да
+  // викаме getElementById за елементи вътре в него — иначе на самия
+  // ПЪРВИ отворен мач в сесията всичко вътре връща null и нищо не се
+  // вгражда (точно затова OA/Коефициенти изглеждаха празни).
+  rowEl.parentNode.insertBefore(dock, rowEl.nextSibling);
+
   mwEmbedPanels();
   MW_OPEN_SECTIONS = { stats:false, oa:false, odds:false };
   ['stats','oa','odds'].forEach(function(k){ mwCollapseSection(k); }); // старт: всичко затворено, компактно
@@ -25770,9 +25777,6 @@ function mwFinishOpen(key, rowEl, m, dock) {
     }
   }
 
-  // ── Вмъкваме dock-а INLINE, точно след кликнатия ред — списъкът
-  // остава на мястото си, не се налага скрол до върха. ──
-  rowEl.parentNode.insertBefore(dock, rowEl.nextSibling);
   dock.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
