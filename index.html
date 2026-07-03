@@ -1929,7 +1929,7 @@ input::placeholder, textarea::placeholder {
 
 
 <!-- PASTE & EXTRACT -->
-<div class="card" id="statsPasteCard">
+<div class="card" id="statsPasteCard" style="display:none">
   <div class="chdr">📋 Въведи статистики <span class="badge" id="inputBadge">ЗОНИ</span></div>
 
   <!-- TEXT PANEL (само copy-paste, OCR/Zone Mapper премахнат) -->
@@ -1959,7 +1959,7 @@ input::placeholder, textarea::placeholder {
 <!-- FIXTURE BROWSER CARD                                    -->
 <!-- ═══════════════════════════════════════════════════════ -->
 
-<div class="card" id="oddsCard">
+<div class="card" id="oddsCard" style="display:none">
   <div class="chdr" style="cursor:default">
     🎰 Коефициенти
     <span class="badge">BOOKMAKER</span>
@@ -2196,7 +2196,7 @@ input::placeholder, textarea::placeholder {
   </div>
 </div>
 
-<div class="card" id="statsCard">
+<div class="card" id="statsCard" style="display:none">
   <div class="chdr" style="cursor:default">
     📊 Статистики
     <span class="badge">MATCH DATA</span>
@@ -22256,6 +22256,7 @@ async function cloudFxPublishToPublic() {
 
   // ── STEP 2: Build payload ──
   var rows = [];
+  var skipped = [];
   var nowMs = Date.now();
   function oraTs(ms) {
     return new Date(ms).toISOString();
@@ -22282,7 +22283,10 @@ async function cloudFxPublishToPublic() {
 
       // ✅ Публикуваме в BetPro САМО мачове с реална прогноза от модела —
       // без pred (напр. недостатъчно статистика) не се изпращат.
-      if (!pred) return;
+      if (!pred) {
+        skipped.push((m.home||'?') + ' vs ' + (m.away||'?') + ' [' + country + ']');
+        return;
+      }
 
       // Top market и alternatives
       var topMarket = m.topMarket;
@@ -22416,6 +22420,12 @@ async function cloudFxPublishToPublic() {
     }
   }
   console.log('[publicFx] ✓ ' + okCount + '/' + rows.length + ' fixtures публикувани в Oracle');
+  if (skipped.length) {
+    console.warn('[publicFx] ⚠ Пропуснати (без прогноза от модела):', skipped);
+    if (typeof showToast === 'function') {
+      showToast('⚠ ' + skipped.length + ' мач(а) пропуснати — липсва достатъчно статистика за прогноза (виж конзолата)', 'warn');
+    }
+  }
   return okCount > 0;
 }
 
@@ -25740,8 +25750,25 @@ function mwExpandSection(key) {
   if (edit) edit.style.display = 'block';
   if (sum)  sum.style.display  = 'none';
   if (chev) chev.textContent   = '▼';
+  // ✅ Явно показваме вградените карти за тази секция
+  (MW_SECTION_CARDS[key] || []).forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) mwShow(el);
+  });
   MW_OPEN_SECTIONS[key] = true;
 }
+// Директно съответствие secion key → реалните engine елементи, които
+// трябва ЯВНО да се скриват при затваряне (защита в дълбочина — не
+// разчитаме само на display:none на wrapper дива).
+var MW_SECTION_CARDS = {
+  stats: ['statsPasteCard', 'statsCard'],
+  oa: ['oaProbsModal'],
+  odds: ['oddsCard']
+};
+function mwForceHideAllCards() {
+  document.querySelectorAll('.mw-embedded').forEach(function(el){ mwHide(el); });
+}
+
 function mwCollapseSection(key) {
   if (MW_ACTIVE_KEY) mwCapture(MW_ACTIVE_KEY);
   if (key === 'stats') mwRenderStatsSummary();
@@ -25753,6 +25780,11 @@ function mwCollapseSection(key) {
   if (edit) edit.style.display = 'none';
   if (sum)  sum.style.display  = 'block';
   if (chev) chev.textContent   = '▶';
+  // ✅ Директно скриваме и самите вградени карти (не само wrapper-а)
+  (MW_SECTION_CARDS[key] || []).forEach(function(id){
+    var el = document.getElementById(id);
+    if (el) mwHide(el);
+  });
   MW_OPEN_SECTIONS[key] = false;
 }
 function mwToggleSection(key) {
@@ -25771,6 +25803,9 @@ function mwFinishOpen(key, rowEl, m, dock) {
   rowEl.parentNode.insertBefore(dock, rowEl.nextSibling);
 
   mwEmbedPanels();
+  // ✅ Двойна защита: веднага след вграждане, ЯВНО скриваме и трите
+  // engine карти, преди каквото и да е друго да се случи.
+  mwForceHideAllCards();
   MW_OPEN_SECTIONS = { stats:false, oa:false, odds:false };
   ['stats','oa','odds'].forEach(function(k){ mwCollapseSection(k); }); // старт: всичко затворено, компактно
   var titleEl = document.getElementById('mwTitle');
