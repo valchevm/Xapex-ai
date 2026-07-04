@@ -1915,6 +1915,14 @@ input::placeholder, textarea::placeholder {
         <div class="dash-tile-ic">🛡</div><div class="dash-tile-t">Sharp Drop</div>
         <div class="dash-tile-d">Sharp пари</div>
       </div>
+      <div class="dash-tile" onclick="navTo('filterCheckCard','🎯 Проверка на филтри')">
+        <div class="dash-tile-ic">🎯</div><div class="dash-tile-t">Filter Check</div>
+        <div class="dash-tile-d">Value + движение</div>
+      </div>
+      <div class="dash-tile" onclick="navTo('tgAlertCard','📨 Telegram известия')">
+        <div class="dash-tile-ic">📨</div><div class="dash-tile-t">Telegram</div>
+        <div class="dash-tile-d">Известия при kickoff</div>
+      </div>
     </div>
   </div>
 
@@ -3589,6 +3597,95 @@ input::placeholder, textarea::placeholder {
     <!-- Резултати (попълват се динамично) -->
     <div id="sharpResults"></div>
 
+  </div>
+</div>
+
+<!-- 🎯 FILTER CHECKER CARD -->
+<!-- 📨 TELEGRAM ALERT CARD -->
+<div class="card" id="tgAlertCard">
+  <div class="chdr" style="cursor:pointer" onclick="toggleTgAlert()">
+    📨 Telegram известия
+    <span id="tgAlertArrow" style="margin-left:auto;color:var(--dim)">▼</span>
+  </div>
+  <div id="tgAlertPanel">
+    <div style="font-size:.62rem;color:var(--dim);margin-bottom:.7rem;line-height:1.5">
+      Постави текста от OddAlerts value bet известието — засича мач/пазар/GMT час, превръща в българско време и насрочва Telegram съобщение точно в началото на срещата.
+    </div>
+
+    <textarea id="tgAlertPaste" rows="8" placeholder="Постави тук текста от OddAlerts (New Value Bets Found...)"
+      style="width:100%;padding:.6rem;background:#0a1429;border:1px solid var(--bord);
+      border-radius:7px;color:var(--txt);font-family:var(--mono);font-size:12px;
+      resize:vertical;line-height:1.4;box-sizing:border-box;margin-bottom:.5rem"></textarea>
+
+    <button class="btn btn-p btn-action" onclick="tgParseAlert()" style="width:100%;margin-bottom:.6rem">
+      🔍 Разчети
+    </button>
+
+    <div id="tgParsedPreview"></div>
+
+    <div style="margin-top:.8rem;border-top:1px solid var(--bord);padding-top:.6rem">
+      <div style="font-size:.66rem;color:var(--acc);font-weight:600;margin-bottom:.5rem">📋 Насрочени известия</div>
+      <div id="tgQueueList"></div>
+    </div>
+  </div>
+</div>
+
+<div class="card" id="filterCheckCard">
+  <div class="chdr" style="cursor:pointer" onclick="toggleFilterCheck()">
+    🎯 Проверка на филтри
+    <span id="filterCheckArrow" style="margin-left:auto;color:var(--dim)">▼</span>
+  </div>
+  <div id="filterCheckPanel">
+    <div style="font-size:.62rem;color:var(--dim);margin-bottom:.7rem;line-height:1.5">
+      Въведи вероятност + коефициент (opening и/или closing) за конкретен пазар — показва % движение и проверява дали влиза в предварително зададените критерии за тази комбинация.
+    </div>
+
+    <div class="g2" style="margin-bottom:.6rem">
+      <div>
+        <label>Пазар</label>
+        <select id="fcSide">
+          <option value="home">🏠 Домакин</option>
+          <option value="away">✈️ Гост</option>
+        </select>
+      </div>
+      <div>
+        <label>Оценявай спрямо</label>
+        <select id="fcTiming">
+          <option value="opening">Opening</option>
+          <option value="closing">Closing</option>
+        </select>
+      </div>
+    </div>
+
+    <div style="margin-bottom:.6rem">
+      <label>Вероятност (OA/модел) %</label>
+      <input type="number" id="fcProb" step=".01" placeholder="напр. 34.15">
+    </div>
+
+    <div class="g2" style="margin-bottom:.6rem">
+      <div>
+        <label>Opening коефициент</label>
+        <input type="number" id="fcOpening" step=".01" placeholder="напр. 6.50">
+      </div>
+      <div>
+        <label>Текущ / Closing коефициент</label>
+        <input type="number" id="fcCurrent" step=".01" placeholder="напр. 7.50">
+      </div>
+    </div>
+
+    <button class="btn btn-p btn-action" onclick="fcCheck()" style="width:100%;margin-bottom:.6rem">
+      ⚡ Провери
+    </button>
+
+    <div id="fcResult"></div>
+
+    <div style="margin-top:.7rem;border-top:1px solid var(--bord);padding-top:.6rem">
+      <div onclick="fcToggleSettings()" style="cursor:pointer;display:flex;align-items:center;gap:.4rem;font-size:.68rem;color:var(--acc);font-weight:600">
+        <span>⚙️ Настрой критерии по пазар/тип</span>
+        <span id="fcSettingsArrow" style="margin-left:auto;color:var(--dim)">▶</span>
+      </div>
+      <div id="fcSettingsPanel" style="display:none;margin-top:.6rem"></div>
+    </div>
   </div>
 </div>
 
@@ -9902,6 +9999,316 @@ async function sharpSaveToOrds(idx) {
 // (Over 2.5 + Under 2.5, BTTS Y + BTTS N). Не работи за 3-way пазари
 // (1X2) без double chance, защото има 3 опции и draw не е покрит.
 // ══════════════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════════════
+// 🎯 FILTER CHECKER — вероятност + opening/closing коефициент →
+// value%, движение% и PASS/FAIL спрямо конфигурируеми критерии
+// за всяка от 4-те комбинации (Home/Away × Opening/Closing).
+// ════════════════════════════════════════════════════════════════
+var FC_STORE_KEY = 'xgpro_filter_criteria_v1';
+var FC_DEFAULTS = {
+  home_opening: { minProb: 0,  maxProb: 100, maxOdds: 10, minValue: 0,   label: 'Домакин · Opening' },
+  home_closing: { minProb: 0,  maxProb: 100, maxOdds: 10, minValue: 0,   label: 'Домакин · Closing' },
+  away_opening: { minProb: 0,  maxProb: 100, maxOdds: 10, minValue: 110, label: 'Гост · Opening' },
+  away_closing: { minProb: 0,  maxProb: 100, maxOdds: 10, minValue: 110, label: 'Гост · Closing' }
+};
+function fcLoadCriteria() {
+  try {
+    var saved = JSON.parse(localStorage.getItem(FC_STORE_KEY) || 'null');
+    if (saved) return Object.assign({}, FC_DEFAULTS, saved);
+  } catch(e){}
+  return JSON.parse(JSON.stringify(FC_DEFAULTS));
+}
+function fcSaveCriteria(crit) {
+  try { localStorage.setItem(FC_STORE_KEY, JSON.stringify(crit)); } catch(e){}
+}
+
+// ════════════════════════════════════════════════════════════════
+// 📨 TELEGRAM ALERT — парсва OddAlerts "New Value Bets Found" текст,
+// превръща GMT час в българско време (EEST/EET), насрочва изпращане
+// в Telegram точно в началото на мача през Oracle опашка + Vercel cron.
+// ════════════════════════════════════════════════════════════════
+function toggleTgAlert() {
+  var p = document.getElementById('tgAlertPanel');
+  var a = document.getElementById('tgAlertArrow');
+  if (!p || !a) return;
+  var shown = p.style.display !== 'none';
+  p.style.display = shown ? 'none' : 'block';
+  a.textContent   = shown ? '▶' : '▼';
+  if (!shown) tgRenderQueue();
+}
+
+// EU DST правило: последна неделя на март 01:00 UTC → последна неделя
+// на октомври 01:00 UTC. България е UTC+3 (EEST) в лятото, UTC+2 (EET) зимата.
+function bgOffsetForDate(utcDate) {
+  var y = utcDate.getUTCFullYear();
+  function lastSunday(month) { // month: 0-indexed
+    var d = new Date(Date.UTC(y, month + 1, 0)); // последен ден от месеца
+    d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+    return d;
+  }
+  var dstStart = lastSunday(2); dstStart.setUTCHours(1,0,0,0);  // март
+  var dstEnd   = lastSunday(9); dstEnd.setUTCHours(1,0,0,0);    // октомври
+  return (utcDate >= dstStart && utcDate < dstEnd) ? 3 : 2;
+}
+
+// Разпознава ден от седмица + числото на месеца → намира следващата
+// реална дата (тази или следваща седмица) спрямо текущия момент.
+var WD_MAP = {sun:0,mon:1,tue:2,wed:3,thu:4,fri:5,sat:6};
+function resolveNextDate(weekdayStr, dayNum, hour, minute) {
+  var wd = WD_MAP[weekdayStr.slice(0,3).toLowerCase()];
+  if (wd == null) return null;
+  var now = new Date();
+  for (var offsetMonths = 0; offsetMonths <= 2; offsetMonths++) {
+    var candidate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + offsetMonths, dayNum, hour, minute, 0));
+    if (candidate.getUTCDay() === wd && candidate.getTime() >= now.getTime() - 24*3600*1000) {
+      return candidate; // GMT/UTC инстанс на kickoff
+    }
+  }
+  return null;
+}
+
+function tgParseAlert() {
+  var text = document.getElementById('tgAlertPaste').value;
+  var box = document.getElementById('tgParsedPreview');
+  if (!text.trim() || !box) return;
+
+  var sideM   = text.match(/⚙️\s*(Home|Away|Draw)\s+(Opening|Closing)/i);
+  var teamsM  = text.match(/🆚\s*(.+?)\s+vs\.?\s+(.+)/i);
+  var leagueM = text.match(/🏆\s*(.+)/);
+  var dateM   = text.match(/📆\s*(\w+)\s+(\d+)\w*\s+at\s+(\d{1,2}):(\d{2})\s*\(GMT\)/i);
+  var probM   = text.match(/Probability:\s*([\d.]+)%\s*\(([\d.]+)\)/i);
+  var oddsM   = text.match(/📉?\s*Odds:\s*([\d.]+)/i);
+  var valueM  = text.match(/Value:\s*([\d.]+)%/i);
+
+  if (!teamsM || !dateM) {
+    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Не успях да разпозная формата — провери дали текстът е копиран изцяло от OddAlerts.</div>';
+    return;
+  }
+
+  var side    = sideM ? sideM[1] : '?';
+  var timing  = sideM ? sideM[2] : '?';
+  var home    = teamsM[1].trim();
+  var away    = teamsM[2].trim();
+  var league  = leagueM ? leagueM[1].trim() : '';
+  var weekday = dateM[1], day = parseInt(dateM[2],10), hourGmt = parseInt(dateM[3],10), minGmt = parseInt(dateM[4],10);
+  var prob    = probM ? parseFloat(probM[1]) : null;
+  var fairOdds= probM ? parseFloat(probM[2]) : null;
+  var odds    = oddsM ? parseFloat(oddsM[1]) : null;
+  var value   = valueM ? parseFloat(valueM[1]) : null;
+
+  var kickoffUtc = resolveNextDate(weekday, day, hourGmt, minGmt);
+  if (!kickoffUtc) {
+    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Не успях да изчисля точната дата от "' + weekday + ' ' + day + '".</div>';
+    return;
+  }
+  var bgOffset = bgOffsetForDate(kickoffUtc);
+  var bgTime = new Date(kickoffUtc.getTime() + bgOffset*3600*1000);
+  var bgStr = String(bgTime.getUTCHours()).padStart(2,'0') + ':' + String(bgTime.getUTCMinutes()).padStart(2,'0');
+  var bgDateStr = bgTime.getUTCDate() + '.' + (bgTime.getUTCMonth()+1) + '.' + bgTime.getUTCFullYear();
+
+  window._tgLastParsed = {
+    side: side, timing: timing, home: home, away: away, league: league,
+    prob: prob, fairOdds: fairOdds, odds: odds, value: value,
+    kickoff_utc: kickoffUtc.toISOString(), bg_time_str: bgStr, bg_date_str: bgDateStr,
+    bg_offset: bgOffset
+  };
+
+  box.innerHTML =
+    '<div style="background:#0a1429;border:1px solid rgba(56,189,248,.3);border-radius:9px;padding:.7rem">' +
+      '<div style="font-size:.8rem;font-weight:700;color:var(--txt);margin-bottom:.4rem">' + home + ' vs ' + away + '</div>' +
+      '<div style="font-size:.62rem;color:var(--dim);margin-bottom:.5rem">' + league + '</div>' +
+      '<div class="mw-result-row" style="margin-bottom:.5rem">' +
+        '<span class="mw-chip">' + side + ' · ' + timing + '</span>' +
+        (prob != null ? '<span class="mw-chip">Prob: ' + prob + '%</span>' : '') +
+        (odds != null ? '<span class="mw-chip">Odds: ' + odds + '</span>' : '') +
+        (value != null ? '<span class="mw-chip" style="color:var(--grn)">Value: +' + value + '%</span>' : '') +
+      '</div>' +
+      '<div style="font-size:.7rem;color:var(--acc);font-weight:600">🇧🇬 Начало: ' + bgDateStr + ' в ' + bgStr + ' (българско време, GMT+' + bgOffset + ')</div>' +
+      '<div style="font-size:.58rem;color:var(--dim);margin-top:.2rem">GMT оригинал: ' + weekday + ' ' + day + ' в ' + String(hourGmt).padStart(2,'0') + ':' + String(minGmt).padStart(2,'0') + '</div>' +
+      '<button class="btn btn-p btn-action" onclick="tgScheduleAlert()" style="width:100%;margin-top:.6rem">📅 Насрочи в Telegram</button>' +
+    '</div>';
+}
+
+async function tgScheduleAlert() {
+  var d = window._tgLastParsed;
+  if (!d) return;
+  var row = {
+    home: d.home, away: d.away, league: d.league,
+    side: d.side, timing: d.timing,
+    prob: d.prob, fair_odds: d.fairOdds, odds: d.odds, value_pct: d.value,
+    kickoff_utc: d.kickoff_utc, bg_time_str: d.bg_time_str, bg_date_str: d.bg_date_str,
+    sent: 0, created_at: new Date().toISOString()
+  };
+  try {
+    var resp = await fetch('/api/telegram-queue', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ row: row })
+    });
+    var data = await resp.json().catch(function(){ return null; });
+    if (resp.ok && data && data.ok) {
+      if (typeof showToast === 'function') showToast('✅ Насрочено за ' + d.bg_time_str + ' българско време', 'success');
+      document.getElementById('tgAlertPaste').value = '';
+      document.getElementById('tgParsedPreview').innerHTML = '';
+      tgRenderQueue();
+    } else {
+      if (typeof showToast === 'function') showToast('❌ Грешка при насрочване: ' + (data && data.error ? data.error : 'HTTP ' + resp.status), 'error');
+    }
+  } catch(e) {
+    if (typeof showToast === 'function') showToast('❌ Grешка: ' + e.message, 'error');
+  }
+}
+
+async function tgRenderQueue() {
+  var box = document.getElementById('tgQueueList');
+  if (!box) return;
+  box.innerHTML = '<div style="font-size:.6rem;color:var(--dim)">Зареждане...</div>';
+  try {
+    var resp = await fetch('/api/telegram-queue');
+    var data = await resp.json().catch(function(){ return null; });
+    var items = (data && data.items) || [];
+    if (!items.length) { box.innerHTML = '<div class="mw-empty">Няма насрочени известия.</div>'; return; }
+    box.innerHTML = items.map(function(it){
+      return '<div style="display:flex;justify-content:space-between;align-items:center;background:#0a1429;border:1px solid var(--bord);border-radius:7px;padding:.5rem .7rem;margin-bottom:.4rem;font-size:.66rem">' +
+        '<span>' + (it.sent ? '✅ ' : '⏳ ') + it.home + ' vs ' + it.away + ' — ' + it.bg_time_str + '</span>' +
+        '<button onclick="tgDeleteQueueItem(' + it.id + ')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:.9rem">🗑</button>' +
+      '</div>';
+    }).join('');
+  } catch(e) {
+    box.innerHTML = '<div style="color:var(--red);font-size:.62rem">⚠ Грешка при зареждане: ' + e.message + '</div>';
+  }
+}
+
+async function tgDeleteQueueItem(id) {
+  try {
+    await fetch('/api/telegram-queue?id=' + id, { method: 'DELETE' });
+    tgRenderQueue();
+  } catch(e){}
+}
+
+function toggleFilterCheck() {
+  var p = document.getElementById('filterCheckPanel');
+  var a = document.getElementById('filterCheckArrow');
+  if (!p || !a) return;
+  var shown = p.style.display !== 'none';
+  p.style.display = shown ? 'none' : 'block';
+  a.textContent   = shown ? '▶' : '▼';
+}
+
+function fcToggleSettings() {
+  var p = document.getElementById('fcSettingsPanel');
+  var a = document.getElementById('fcSettingsArrow');
+  if (!p || !a) return;
+  var shown = p.style.display !== 'none';
+  if (!shown) fcRenderSettings();
+  p.style.display = shown ? 'none' : 'block';
+  a.textContent   = shown ? '▶' : '▼';
+}
+
+function fcRenderSettings() {
+  var box = document.getElementById('fcSettingsPanel');
+  if (!box) return;
+  var crit = fcLoadCriteria();
+  var keys = ['home_opening','home_closing','away_opening','away_closing'];
+  var html = '';
+  keys.forEach(function(k){
+    var c = crit[k];
+    html +=
+      '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.5rem">' +
+        '<div style="font-size:.66rem;font-weight:700;color:var(--acc);margin-bottom:.4rem">' + c.label + '</div>' +
+        '<div class="g2" style="margin-bottom:.4rem">' +
+          '<div><label style="font-size:.58rem">Min вероятност %</label><input type="number" id="fc_' + k + '_minProb" value="' + c.minProb + '" step="1"></div>' +
+          '<div><label style="font-size:.58rem">Max вероятност %</label><input type="number" id="fc_' + k + '_maxProb" value="' + c.maxProb + '" step="1"></div>' +
+        '</div>' +
+        '<div class="g2">' +
+          '<div><label style="font-size:.58rem">Max коефициент</label><input type="number" id="fc_' + k + '_maxOdds" value="' + c.maxOdds + '" step=".1"></div>' +
+          '<div><label style="font-size:.58rem">Min value %</label><input type="number" id="fc_' + k + '_minValue" value="' + c.minValue + '" step="1"></div>' +
+        '</div>' +
+      '</div>';
+  });
+  html += '<button class="btn btn-p btn-action" onclick="fcSaveSettingsFromUI()" style="width:100%">💾 Запази критериите</button>';
+  box.innerHTML = html;
+}
+
+function fcSaveSettingsFromUI() {
+  var crit = fcLoadCriteria();
+  ['home_opening','home_closing','away_opening','away_closing'].forEach(function(k){
+    function v(suffix){ var el = document.getElementById('fc_' + k + '_' + suffix); return el ? parseFloat(el.value) || 0 : crit[k][suffix]; }
+    crit[k].minProb  = v('minProb');
+    crit[k].maxProb  = v('maxProb');
+    crit[k].maxOdds  = v('maxOdds');
+    crit[k].minValue = v('minValue');
+  });
+  fcSaveCriteria(crit);
+  if (typeof showToast === 'function') showToast('✅ Критериите са запазени', 'success');
+}
+
+function fcCheck() {
+  var side   = document.getElementById('fcSide').value;     // home | away
+  var timing = document.getElementById('fcTiming').value;   // opening | closing
+  var prob   = parseFloat(document.getElementById('fcProb').value);
+  var opening = parseFloat(document.getElementById('fcOpening').value);
+  var current = parseFloat(document.getElementById('fcCurrent').value);
+  var box = document.getElementById('fcResult');
+  if (!box) return;
+
+  if (isNaN(prob) || (isNaN(opening) && isNaN(current))) {
+    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Въведи поне вероятност и един коефициент (opening или текущ).</div>';
+    return;
+  }
+
+  var valOpening = !isNaN(opening) ? (prob/100*opening - 1)*100 : null;
+  var valCurrent = !isNaN(current) ? (prob/100*current - 1)*100 : null;
+  var movement = (!isNaN(opening) && !isNaN(current) && opening > 0)
+    ? (current - opening)/opening*100 : null;
+
+  var evalOdds = timing === 'closing' ? current : opening;
+  var evalValue = timing === 'closing' ? valCurrent : valOpening;
+  var critKey = side + '_' + timing;
+  var crit = fcLoadCriteria()[critKey];
+
+  var checks = [];
+  var pass = true;
+  function chk(label, ok, detail) {
+    checks.push({label:label, ok:ok, detail:detail});
+    if (!ok) pass = false;
+  }
+  if (!isNaN(evalOdds)) {
+    chk('Вероятност ≥ ' + crit.minProb + '%', prob >= crit.minProb, prob.toFixed(1) + '%');
+    chk('Вероятност ≤ ' + crit.maxProb + '%', prob <= crit.maxProb, prob.toFixed(1) + '%');
+    chk('Коефициент ≤ ' + crit.maxOdds, evalOdds <= crit.maxOdds, evalOdds.toFixed(2));
+    chk('Value ≥ ' + crit.minValue + '%', evalValue != null && evalValue >= crit.minValue, evalValue != null ? evalValue.toFixed(1) + '%' : '—');
+  } else {
+    pass = false;
+  }
+
+  var movArrow = movement == null ? '' : (movement > 0 ? '📈 нагоре' : movement < 0 ? '📉 надолу' : '➡️ без промяна');
+  var movWarn = '';
+  if (movement != null) {
+    if (timing === 'closing' && valOpening != null && valOpening < crit.minValue && evalValue >= crit.minValue) {
+      movWarn = '<div style="color:var(--yellow);font-size:.62rem;margin-top:.4rem">⚠ Value-то се появява едва СЛЕД движение нагоре (не е било налично при opening) — исторически такива случаи представляват по-слаб сигнал.</div>';
+    }
+  }
+
+  var html =
+    '<div style="background:' + (pass ? 'rgba(52,211,153,.08)' : 'rgba(248,113,113,.08)') + ';border:1px solid ' + (pass ? 'rgba(52,211,153,.4)' : 'rgba(248,113,113,.4)') + ';border-radius:9px;padding:.7rem">' +
+      '<div style="font-size:.85rem;font-weight:700;color:' + (pass ? 'var(--grn)' : 'var(--red)') + ';margin-bottom:.5rem">' +
+        (pass ? '✅ ВЛИЗА във филтрите (' + crit.label + ')' : '❌ НЕ влиза във филтрите (' + crit.label + ')') +
+      '</div>' +
+      '<div class="mw-result-row" style="margin-bottom:.5rem">' +
+        (valOpening != null ? '<span class="mw-chip">Value@Opening: ' + valOpening.toFixed(1) + '%</span>' : '') +
+        (valCurrent != null ? '<span class="mw-chip">Value@Current: ' + valCurrent.toFixed(1) + '%</span>' : '') +
+        (movement != null ? '<span class="mw-chip">Движение: ' + (movement>0?'+':'') + movement.toFixed(1) + '% ' + movArrow + '</span>' : '') +
+      '</div>' +
+      checks.map(function(c){
+        return '<div style="font-size:.65rem;color:' + (c.ok ? 'var(--grn)' : 'var(--red)') + '">' + (c.ok ? '✓' : '✗') + ' ' + c.label + ' — текущо: ' + c.detail + '</div>';
+      }).join('') +
+      movWarn +
+    '</div>';
+  box.innerHTML = html;
+}
+
 
 function toggleArbCalc() {
   var p = document.getElementById('arbCalcPanel');
@@ -25323,7 +25730,7 @@ function dismissIOSHint() {
 (function(){
   // Картите които участват в навигацията
   var NAV_CARDS = ['statsPasteCard','statsCard','oddsCard','resCard','addLogCard',
-    'backtestCard','xgTestCard','sharpDropCard','arbCalcCard',
+    'backtestCard','xgTestCard','sharpDropCard','arbCalcCard','filterCheckCard','tgAlertCard',
     'kellyCalcCard','logSection','fxBrowserCard','settingsCard'];
 
   // Маркираме ги с nav-card клас (за CSS скриване)
@@ -26051,6 +26458,7 @@ setInterval(mwObserveList, 2000);
 
 })();
 </script>
+
 
 </body>
 </html>
