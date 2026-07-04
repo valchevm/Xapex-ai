@@ -48,10 +48,16 @@ export default async function handler(req, res) {
   }
 
   try {
-    const nowIso = new Date().toISOString();
-    const q = encodeURIComponent(JSON.stringify({ sent: 0, kickoff_utc: { "$lte": nowIso } }));
-    const due = await oraFetch(`/${TABLE}/?q=${q}&limit=50`);
-    const items = due.json?.items || [];
+    // ✅ ORDS $lte филтърът върху VARCHAR2 kickoff_utc не връщаше редове
+    // (тихо 0, без грешка) — вместо да разчитаме на Oracle да сравнява
+    // датите, тегли всички неизпратени и сравняваме тук, в JS.
+    const q = encodeURIComponent(JSON.stringify({ sent: 0 }));
+    const due = await oraFetch(`/${TABLE}/?q=${q}&limit=200`);
+    const now = Date.now();
+    const items = (due.json?.items || []).filter((it) => {
+      const t = Date.parse(it.kickoff_utc);
+      return !isNaN(t) && t <= now;
+    });
 
     let sentCount = 0;
     const errors = [];
