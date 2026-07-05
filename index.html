@@ -10291,11 +10291,26 @@ function fcCheck() {
     }
   }
 
+  // ✅ Fair odds за въведената вероятност + implied вероятност за
+  // opening/текущия коефициент — директно съответствие вероятност↔коефициент.
+  var fairOddsForProb = prob > 0 ? (100 / prob) : null;
+  var impliedProbOpening = (!isNaN(opening) && opening > 0) ? (100 / opening) : null;
+  var impliedProbCurrent = (!isNaN(current) && current > 0) ? (100 / current) : null;
+
+  var conversionHtml =
+    '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.6rem">' +
+      '<div style="font-size:.6rem;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.4rem">Вероятност ↔ Коефициент</div>' +
+      (fairOddsForProb != null ? '<div style="font-size:.7rem;margin-bottom:.25rem">🎯 Вероятност <b>' + prob.toFixed(2) + '%</b> отговаря на коеф. <b style="color:var(--acc)">' + fairOddsForProb.toFixed(2) + '</b></div>' : '') +
+      (impliedProbOpening != null ? '<div style="font-size:.7rem;margin-bottom:.25rem">🟦 Opening <b>' + opening.toFixed(2) + '</b> отговаря на вероятност <b style="color:var(--acc)">' + impliedProbOpening.toFixed(2) + '%</b></div>' : '') +
+      (impliedProbCurrent != null ? '<div style="font-size:.7rem">🟩 Текущ (Closing) <b>' + current.toFixed(2) + '</b> отговаря на вероятност <b style="color:var(--acc)">' + impliedProbCurrent.toFixed(2) + '%</b></div>' : '') +
+    '</div>';
+
   var html =
     '<div style="background:' + (pass ? 'rgba(52,211,153,.08)' : 'rgba(248,113,113,.08)') + ';border:1px solid ' + (pass ? 'rgba(52,211,153,.4)' : 'rgba(248,113,113,.4)') + ';border-radius:9px;padding:.7rem">' +
       '<div style="font-size:.85rem;font-weight:700;color:' + (pass ? 'var(--grn)' : 'var(--red)') + ';margin-bottom:.5rem">' +
         (pass ? '✅ ВЛИЗА във филтрите (' + crit.label + ')' : '❌ НЕ влиза във филтрите (' + crit.label + ')') +
       '</div>' +
+      conversionHtml +
       '<div class="mw-result-row" style="margin-bottom:.5rem">' +
         (valOpening != null ? '<span class="mw-chip">Value@Opening: ' + valOpening.toFixed(1) + '%</span>' : '') +
         (valCurrent != null ? '<span class="mw-chip">Value@Current: ' + valCurrent.toFixed(1) + '%</span>' : '') +
