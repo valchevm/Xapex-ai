@@ -5209,6 +5209,18 @@ function fact(n) {
 }
 function pois(lam, k) { return Math.exp(-lam) * Math.pow(lam, k) / fact(k); }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ✅ Реална интеграция на приетите OA калибрационни тегла в живия
+// модел. Ако потребителят е приел предложение за конкретен пазар в
+// OA Калибрация Монитора (Backtester), calculate() ползва ТОВА тегло
+// вместо фиксираните 40%. Без прието override → връща подадения default.
+function getOAWeight(marketKey, defaultPct) {
+  try {
+    var o = JSON.parse(localStorage.getItem('xgpro_oa_weight_overrides_v1') || '{}');
+    if (o[marketKey] && typeof o[marketKey].weight === 'number') return o[marketKey].weight;
+  } catch(e) {}
+  return defaultPct;
+}
 function fmt(n, d=2) { return Number(n).toFixed(d); }
 function fmtU(n) {
   const v = Number(n);
@@ -6363,7 +6375,10 @@ function calculate() {
     // 4. НЯМА нищо → Poisson модел (този блок не се изпълнява, return по-горе)
     var wBase, wPin, wOA;
     if (hasOA && hasPin) {
-      wBase = 0; wPin = 0.60; wOA = 0.40;     // и двата → 60 Pin / 40 OA
+      // ✅ Реално приложено OA тегло (от OA Калибрация Монитора), ако е
+      // прието за пазар 'ft1x2' — иначе базовите 40%, непроменено поведение.
+      var oaW1x2 = clamp(getOAWeight('ft1x2', 40), 0, 100) / 100;
+      wBase = 0; wPin = 1 - oaW1x2; wOA = oaW1x2;
     } else if (hasOA) {
       wBase = 0; wPin = 0;    wOA = 1.0;       // само OA
     } else { // hasPin
@@ -6405,7 +6420,10 @@ function calculate() {
     var pO_oa  = (hasOA && oa.o25) ? oa.o25/100 : CC.pO;
     var pU_oa  = (hasOA && oa.o25) ? 1 - oa.o25/100 : CC.pU;
 
-    var wBaseOU = wBase, wPinOU = pinOU ? wPin : 0, wOAOU = (hasOA && oa.o25) ? wOA : 0;
+    // ✅ 'over' пазар може да има собствено прието OA тегло; ако няма
+    // override, пада обратно към същото тегло като 1X2 (старо поведение).
+    var oaWOU = clamp(getOAWeight('over', wOA * 100), 0, 100) / 100;
+    var wBaseOU = wBase, wPinOU = pinOU ? (1 - oaWOU) : 0, wOAOU = (hasOA && oa.o25) ? oaWOU : 0;
     var totOU   = wBaseOU + wPinOU + wOAOU;
     if (totOU > 0) {
       var pO_new = CC.pO * (wBaseOU/totOU) + pO_pin * (wPinOU/totOU) + pO_oa * (wOAOU/totOU);
@@ -6431,7 +6449,7 @@ function calculate() {
 
     // ── Обновяваме ML indicator текста (честно: какво реално формира вероятността) ──
     var blendParts = [];
-    if (hasOA && hasPin)      blendParts.push('60% Pinnacle + 40% OA');
+    if (hasOA && hasPin)      blendParts.push(Math.round(wPin*100) + '% Pinnacle + ' + Math.round(wOA*100) + '% OA');
     else if (hasOA)           blendParts.push('само OA');
     else if (hasPin)          blendParts.push('само Pinnacle');
     else                      blendParts.push('Poisson/xG модел');
@@ -8512,10 +8530,15 @@ function oaCalcCalibration() {
   if (!mkt) return null;
   var bands = {};
   var totalN = 0;
+  var brierSum = 0;
+  var winSum = 0;
   BT_STATE.cands.forEach(function(c){
     if (c.status !== 'FT') return;
     var res = mkt.settle(c);
     if (res == null) return;
+    var p = c.prob / 100;
+    brierSum += (p - res) * (p - res);
+    winSum += res;
     var band = Math.max(0, Math.min(90, Math.floor(c.prob / 10) * 10));
     if (!bands[band]) bands[band] = { n:0, w:0, predSum:0 };
     bands[band].n++;
@@ -8523,7 +8546,7 @@ function oaCalcCalibration() {
     bands[band].predSum += c.prob;
     totalN++;
   });
-  if (totalN < 30) return { rows: [], avgAbsGap: null, n: totalN, insufficientData: true };
+  if (totalN < 30) return { rows: [], avgAbsGap: null, bss: null, n: totalN, insufficientData: true };
 
   var rows = [];
   var gapWeighted = 0;
@@ -8535,22 +8558,37 @@ function oaCalcCalibration() {
     rows.push({ band:b, n:d.n, pred:pred, actual:actual, gap:gap });
     gapWeighted += Math.abs(gap) * d.n;
   });
-  return { rows: rows, avgAbsGap: gapWeighted / totalN, n: totalN };
+
+  // ── Brier Score + Brier Skill Score (стандартна метрика за
+  // верификация на прогнози — метеорология/спортна аналитика) ──
+  // BSS = 1 - Brier_OA / Brier_climatology
+  // 0 = OA не е по-добър от "винаги предвиждай базовата честота"
+  // >0 = OA има реално предимство; <0 = OA е по-зле от baseline
+  var brier = brierSum / totalN;
+  var baseRate = winSum / totalN;
+  var brierRef = baseRate * (1 - baseRate);
+  var bss = brierRef > 0 ? (1 - brier / brierRef) : 0;
+
+  return { rows: rows, avgAbsGap: gapWeighted / totalN, brier: brier, brierRef: brierRef, bss: bss, n: totalN };
 }
 
-// Heuristic: средно отклонение (пр.п.) → предложена промяна в OA
-// теглото спрямо базовите 40% (текущия фиксиран blend в calculate()).
-function oaSuggestWeight(avgAbsGap, baseWeight) {
-  if (avgAbsGap == null) return null;
+// ✅ Плавна, пропорционална корекция вместо груби ±10/±5 стъпки.
+// Brier Skill Score е стандартна, статистически обоснована метрика —
+// всеки 0.10 (10%) подобрение спрямо "climatology" baseline премества
+// теглото с ~SCALE пр.п., пропорционално на реалната сила на предимството.
+function oaSuggestWeight(bss, baseWeight) {
+  if (bss == null) return null;
   var base = baseWeight != null ? baseWeight : 40;
-  var tier, delta;
-  if (avgAbsGap <= 2)      { tier = 'Отлична';     delta = +10; }
-  else if (avgAbsGap <= 4) { tier = 'Добра';        delta = +5;  }
-  else if (avgAbsGap <= 6) { tier = 'Приемлива';    delta = 0;   }
-  else if (avgAbsGap <= 9) { tier = 'Слаба';        delta = -5;  }
-  else                     { tier = 'Много слаба';  delta = -10; }
-  var suggested = Math.max(10, Math.min(70, base + delta));
-  return { tier: tier, base: base, delta: delta, suggested: suggested };
+  var SCALE = 40; // пр.п. на единица BSS (0.10 BSS → 4 пр.п. промяна)
+  var delta = bss * SCALE;
+  var suggested = Math.round(clamp(base + delta, 15, 65));
+  var tier;
+  if (bss >= 0.15)      tier = 'Отлична';
+  else if (bss >= 0.08) tier = 'Добра';
+  else if (bss >= 0.02) tier = 'Приемлива';
+  else if (bss >= -0.05) tier = 'Слаба';
+  else                   tier = 'Много слаба';
+  return { tier: tier, base: base, bss: bss, delta: Math.round(suggested - base), suggested: suggested };
 }
 
 function oaRenderCalibrationPanel() {
@@ -8560,6 +8598,12 @@ function oaRenderCalibrationPanel() {
 
   var calib = oaCalcCalibration();
   var marketLabel = (BT_MARKETS[BT_STATE.market] || {}).label || BT_STATE.market;
+  // ✅ Само тези backtester пазари имат директен OA+Pinnacle blend в
+  // calculate(), който реално чете getOAWeight() — за останалите (1x/
+  // x2/12/btts/corners/teamgoals) анализът е диагностичен засега,
+  // защото calculate() още няма отделен blend за тях.
+  var LIVE_BLEND_MARKETS = { ft1x2: 1, over: 1 };
+  var isLive = !!LIVE_BLEND_MARKETS[BT_STATE.market];
 
   if (!calib || calib.insufficientData) {
     box.innerHTML =
@@ -8572,7 +8616,7 @@ function oaRenderCalibrationPanel() {
   var overrides = oaLoadWeightOverrides();
   var existing = overrides[BT_STATE.market];
   var currentWeight = existing ? existing.weight : 40;
-  var sugg = oaSuggestWeight(calib.avgAbsGap, currentWeight);
+  var sugg = oaSuggestWeight(calib.bss, currentWeight);
   var pendingChange = sugg.suggested !== currentWeight;
 
   var rowsHtml = calib.rows.map(function(r){
@@ -8586,12 +8630,15 @@ function oaRenderCalibrationPanel() {
   }).join('');
 
   var html =
-    '<div class="chdr" style="font-size:.7rem">🔬 OA Калибрация Монитор <span class="badge">' + marketLabel + '</span></div>' +
+    '<div class="chdr" style="font-size:.7rem">🔬 OA Калибрация Монитор <span class="badge">' + marketLabel + '</span>' +
+      (isLive ? '' : ' <span class="badge" style="background:rgba(167,139,250,.15);color:var(--pur)">само диагностика</span>') +
+    '</div>' +
     '<div style="font-size:.6rem;color:var(--dim);margin:.3rem 0 .5rem">Само 90 мин. FT резултати (без продължения/дузпи) · n=' + calib.n + '</div>' +
     '<div style="max-height:180px;overflow-y:auto;margin-bottom:.6rem">' + rowsHtml + '</div>' +
     '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.6rem">' +
-      '<div style="font-size:.7rem;margin-bottom:.3rem">Средно отклонение: <b>' + calib.avgAbsGap.toFixed(2) + ' пр.п.</b> → <b>' + sugg.tier + '</b> калибрация</div>' +
-      '<div style="font-size:.65rem;color:var(--dim)">Текущо OA тегло: <b style="color:var(--txt)">' + currentWeight + '%</b>' +
+      '<div style="font-size:.7rem;margin-bottom:.3rem">Brier Skill Score: <b>' + (calib.bss >= 0 ? '+' : '') + (calib.bss*100).toFixed(1) + '%</b> → <b>' + sugg.tier + '</b> калибрация</div>' +
+      '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.3rem">(средно отклонение ' + calib.avgAbsGap.toFixed(2) + ' пр.п. · Brier ' + calib.brier.toFixed(4) + ' срещу baseline ' + calib.brierRef.toFixed(4) + ')</div>' +
+      '<div style="font-size:.65rem;color:var(--dim)">Текущо OA тегло' + (isLive ? ' (приложено в модела)' : '') + ': <b style="color:var(--txt)">' + currentWeight + '%</b>' +
         (existing ? ' <span style="color:var(--grn)">(прието ' + existing.acceptedAt.slice(0,10) + ')</span>' : ' (базово, непроменено)') +
       '</div>' +
     '</div>';
@@ -8600,7 +8647,11 @@ function oaRenderCalibrationPanel() {
     html +=
       '<div style="background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:8px;padding:.6rem">' +
         '<div style="font-size:.72rem;font-weight:700;color:var(--acc);margin-bottom:.4rem">💡 Предложение: OA тегло ' + currentWeight + '% → ' + sugg.suggested + '%</div>' +
-        '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.6rem">Само записва решението ти локално — НЕ променя автоматично живия модел в calculate().</div>' +
+        '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.6rem">' +
+          (isLive
+            ? 'При "Приеми" calculate() веднага започва да ползва това тегло за пазар "' + marketLabel + '".'
+            : 'Диагностично засега — calculate() още няма отделен OA+Pinnacle blend за "' + marketLabel + '", затова приемането само се пази за бъдеща употреба.') +
+        '</div>' +
         '<div style="display:flex;gap:.5rem">' +
           '<button class="btn btn-p" style="flex:1;font-size:.65rem" onclick="oaAcceptWeightSuggestion(\'' + BT_STATE.market + '\',' + sugg.suggested + ')">✅ Приеми</button>' +
           '<button class="btn btn-sec" style="flex:1;font-size:.65rem" onclick="oaRejectWeightSuggestion()">❌ Откажи</button>' +
@@ -8611,7 +8662,7 @@ function oaRenderCalibrationPanel() {
   }
 
   if (existing) {
-    html += '<button class="btn btn-sec" style="width:100%;margin-top:.5rem;font-size:.6rem" onclick="oaClearWeightOverride(\'' + BT_STATE.market + '\');oaRenderCalibrationPanel();">🗑 Изчисти прието тегло</button>';
+    html += '<button class="btn btn-sec" style="width:100%;margin-top:.5rem;font-size:.6rem" onclick="oaClearWeightOverride(\'' + BT_STATE.market + '\');oaRenderCalibrationPanel();">🗑 Изчисти прието тегло' + (isLive ? ' (връща модела на 40%)' : '') + '</button>';
   }
 
   box.innerHTML = html;
@@ -8619,8 +8670,10 @@ function oaRenderCalibrationPanel() {
 
 window.oaAcceptWeightSuggestion = function(market, weight) {
   oaSaveWeightOverride(market, weight);
+  var isLive = (market === 'ft1x2' || market === 'over');
   if (typeof showToast === 'function') {
-    showToast('✅ OA тегло за "' + ((BT_MARKETS[market] || {}).label || market) + '" прието: ' + weight + '% (записано, все още не е приложено в модела)', 'success');
+    showToast('✅ OA тегло за "' + ((BT_MARKETS[market] || {}).label || market) + '" прието: ' + weight + '%' +
+      (isLive ? ' — вече е активно в модела' : ' (диагностично, изчаква live blend за този пазар)'), 'success');
   }
   oaRenderCalibrationPanel();
 };
