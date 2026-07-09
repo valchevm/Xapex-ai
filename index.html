@@ -3561,6 +3561,13 @@ input::placeholder, textarea::placeholder {
     <!-- Results -->
     <div id="btResults"></div>
 
+    <!-- ═══ 🔬 OA Калибрация Монитор ═══
+         Проверява точността на OA вероятностите спрямо реалния FT резултат
+         (само 90 минути, без продължения/дузпи) за текущо заредения пазар.
+         НЕ променя живия blend в calculate() автоматично — само предлага,
+         потребителят изрично приема/отказва. ═══ -->
+    <div id="oaCalibPanel" style="margin-top:1rem"></div>
+
   </div>
 </div>
 
@@ -8459,6 +8466,7 @@ function btRecompute() {
       'Upload <strong>home</strong> and <strong>away</strong> probability exports.<br>' +
       'Merged by match ID, computes value, and settles the FT 1X2 result.</div>';
     var sum = document.getElementById('btSummary'); if (sum) sum.textContent = '';
+    if (typeof oaRenderCalibrationPanel === 'function') oaRenderCalibrationPanel();
     return;
   }
   var R = btCompute();
@@ -8467,7 +8475,158 @@ function btRecompute() {
   btRenderFilters();  // refresh bet count
   var sum = document.getElementById('btSummary');
   if (sum) sum.textContent = R.all.n + ' bets · ' + (R.all.u >= 0 ? '+' : '') + R.all.u.toFixed(1) + 'u';
+  if (typeof oaRenderCalibrationPanel === 'function') oaRenderCalibrationPanel();
 }
+
+// ═══════════════════════════════════════════════════════════════
+// 🔬 OA КАЛИБРАЦИЯ МОНИТОР
+// Проверява точността на OA вероятностите спрямо реалния 90-мин. FT
+// резултат (БЕЗ продължения/дузпи) за текущо заредения в Backtester-а
+// пазар. Генерира предложение за корекция на OA теглото в blend-а —
+// НЕ пипа живия calculate() автоматично. Потребителят изрично приема
+// или отказва; прието тегло се пази само локално (localStorage) за
+// бъдещо ръчно прилагане, не влияе на текущите изчисления.
+// ═══════════════════════════════════════════════════════════════
+var OA_WEIGHT_STORE_KEY = 'xgpro_oa_weight_overrides_v1';
+
+function oaLoadWeightOverrides() {
+  try { return JSON.parse(localStorage.getItem(OA_WEIGHT_STORE_KEY) || '{}'); }
+  catch(e) { return {}; }
+}
+function oaSaveWeightOverride(market, weight) {
+  var o = oaLoadWeightOverrides();
+  o[market] = { weight: weight, acceptedAt: new Date().toISOString() };
+  try { localStorage.setItem(OA_WEIGHT_STORE_KEY, JSON.stringify(o)); } catch(e){}
+}
+function oaClearWeightOverride(market) {
+  var o = oaLoadWeightOverrides();
+  delete o[market];
+  try { localStorage.setItem(OA_WEIGHT_STORE_KEY, JSON.stringify(o)); } catch(e){}
+}
+
+// Изчислява калибрация по 10% probability bands, само за status==='FT'
+// (строго 90 минути — изключва FT_PEN/AET напълно, независимо от
+// etDraw настройката, която е за PnL цели, не за калибрация).
+function oaCalcCalibration() {
+  var mkt = BT_MARKETS[BT_STATE.market];
+  if (!mkt) return null;
+  var bands = {};
+  var totalN = 0;
+  BT_STATE.cands.forEach(function(c){
+    if (c.status !== 'FT') return;
+    var res = mkt.settle(c);
+    if (res == null) return;
+    var band = Math.max(0, Math.min(90, Math.floor(c.prob / 10) * 10));
+    if (!bands[band]) bands[band] = { n:0, w:0, predSum:0 };
+    bands[band].n++;
+    bands[band].w += res;
+    bands[band].predSum += c.prob;
+    totalN++;
+  });
+  if (totalN < 30) return { rows: [], avgAbsGap: null, n: totalN, insufficientData: true };
+
+  var rows = [];
+  var gapWeighted = 0;
+  Object.keys(bands).map(Number).sort(function(a,b){ return a - b; }).forEach(function(b){
+    var d = bands[b];
+    var pred = d.predSum / d.n;
+    var actual = d.w / d.n * 100;
+    var gap = actual - pred;
+    rows.push({ band:b, n:d.n, pred:pred, actual:actual, gap:gap });
+    gapWeighted += Math.abs(gap) * d.n;
+  });
+  return { rows: rows, avgAbsGap: gapWeighted / totalN, n: totalN };
+}
+
+// Heuristic: средно отклонение (пр.п.) → предложена промяна в OA
+// теглото спрямо базовите 40% (текущия фиксиран blend в calculate()).
+function oaSuggestWeight(avgAbsGap, baseWeight) {
+  if (avgAbsGap == null) return null;
+  var base = baseWeight != null ? baseWeight : 40;
+  var tier, delta;
+  if (avgAbsGap <= 2)      { tier = 'Отлична';     delta = +10; }
+  else if (avgAbsGap <= 4) { tier = 'Добра';        delta = +5;  }
+  else if (avgAbsGap <= 6) { tier = 'Приемлива';    delta = 0;   }
+  else if (avgAbsGap <= 9) { tier = 'Слаба';        delta = -5;  }
+  else                     { tier = 'Много слаба';  delta = -10; }
+  var suggested = Math.max(10, Math.min(70, base + delta));
+  return { tier: tier, base: base, delta: delta, suggested: suggested };
+}
+
+function oaRenderCalibrationPanel() {
+  var box = document.getElementById('oaCalibPanel');
+  if (!box) return;
+  if (!BT_STATE.cands.length) { box.innerHTML = ''; return; }
+
+  var calib = oaCalcCalibration();
+  var marketLabel = (BT_MARKETS[BT_STATE.market] || {}).label || BT_STATE.market;
+
+  if (!calib || calib.insufficientData) {
+    box.innerHTML =
+      '<div class="chdr" style="font-size:.7rem">🔬 OA Калибрация Монитор</div>' +
+      '<div style="font-size:.65rem;color:var(--dim);padding:.5rem 0">Недостатъчно FT мачове (' + (calib ? calib.n : 0) +
+      ') за надежден анализ на пазар "' + marketLabel + '" — нужни са поне 30.</div>';
+    return;
+  }
+
+  var overrides = oaLoadWeightOverrides();
+  var existing = overrides[BT_STATE.market];
+  var currentWeight = existing ? existing.weight : 40;
+  var sugg = oaSuggestWeight(calib.avgAbsGap, currentWeight);
+  var pendingChange = sugg.suggested !== currentWeight;
+
+  var rowsHtml = calib.rows.map(function(r){
+    var gapColor = Math.abs(r.gap) <= 3 ? 'var(--grn)' : Math.abs(r.gap) <= 6 ? 'var(--yellow)' : '#ff6b6b';
+    return '<div style="display:grid;grid-template-columns:1.1fr .7fr 1.1fr 1.3fr;gap:.3rem;font-size:.6rem;padding:.25rem 0;border-bottom:1px solid rgba(255,255,255,.04)">' +
+      '<span>' + r.band + '-' + (r.band + 10) + '%</span>' +
+      '<span style="color:var(--dim)">n=' + r.n + '</span>' +
+      '<span>прогноза ' + r.pred.toFixed(1) + '%</span>' +
+      '<span style="color:' + gapColor + '">реално ' + r.actual.toFixed(1) + '% (' + (r.gap >= 0 ? '+' : '') + r.gap.toFixed(1) + ')</span>' +
+    '</div>';
+  }).join('');
+
+  var html =
+    '<div class="chdr" style="font-size:.7rem">🔬 OA Калибрация Монитор <span class="badge">' + marketLabel + '</span></div>' +
+    '<div style="font-size:.6rem;color:var(--dim);margin:.3rem 0 .5rem">Само 90 мин. FT резултати (без продължения/дузпи) · n=' + calib.n + '</div>' +
+    '<div style="max-height:180px;overflow-y:auto;margin-bottom:.6rem">' + rowsHtml + '</div>' +
+    '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.6rem">' +
+      '<div style="font-size:.7rem;margin-bottom:.3rem">Средно отклонение: <b>' + calib.avgAbsGap.toFixed(2) + ' пр.п.</b> → <b>' + sugg.tier + '</b> калибрация</div>' +
+      '<div style="font-size:.65rem;color:var(--dim)">Текущо OA тегло: <b style="color:var(--txt)">' + currentWeight + '%</b>' +
+        (existing ? ' <span style="color:var(--grn)">(прието ' + existing.acceptedAt.slice(0,10) + ')</span>' : ' (базово, непроменено)') +
+      '</div>' +
+    '</div>';
+
+  if (pendingChange) {
+    html +=
+      '<div style="background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:8px;padding:.6rem">' +
+        '<div style="font-size:.72rem;font-weight:700;color:var(--acc);margin-bottom:.4rem">💡 Предложение: OA тегло ' + currentWeight + '% → ' + sugg.suggested + '%</div>' +
+        '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.6rem">Само записва решението ти локално — НЕ променя автоматично живия модел в calculate().</div>' +
+        '<div style="display:flex;gap:.5rem">' +
+          '<button class="btn btn-p" style="flex:1;font-size:.65rem" onclick="oaAcceptWeightSuggestion(\'' + BT_STATE.market + '\',' + sugg.suggested + ')">✅ Приеми</button>' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.65rem" onclick="oaRejectWeightSuggestion()">❌ Откажи</button>' +
+        '</div>' +
+      '</div>';
+  } else {
+    html += '<div style="font-size:.62rem;color:var(--dim);text-align:center;padding:.3rem 0">Няма предложена промяна за този пазар в момента.</div>';
+  }
+
+  if (existing) {
+    html += '<button class="btn btn-sec" style="width:100%;margin-top:.5rem;font-size:.6rem" onclick="oaClearWeightOverride(\'' + BT_STATE.market + '\');oaRenderCalibrationPanel();">🗑 Изчисти прието тегло</button>';
+  }
+
+  box.innerHTML = html;
+}
+
+window.oaAcceptWeightSuggestion = function(market, weight) {
+  oaSaveWeightOverride(market, weight);
+  if (typeof showToast === 'function') {
+    showToast('✅ OA тегло за "' + ((BT_MARKETS[market] || {}).label || market) + '" прието: ' + weight + '% (записано, все още не е приложено в модела)', 'success');
+  }
+  oaRenderCalibrationPanel();
+};
+window.oaRejectWeightSuggestion = function() {
+  if (typeof showToast === 'function') showToast('Предложението е отказано', 'warn');
+};
 
 function btFmt(x, d) { d = d || 1; return (x >= 0 ? '+' : '') + x.toFixed(d); }
 function btCls(x) { return x > 0 ? 'var(--grn)' : x < 0 ? '#ff6b6b' : 'var(--dim)'; }
