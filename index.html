@@ -6434,14 +6434,43 @@ function calculate() {
       CC.eU = fmt((CC.pU - 1/parseFloat(CC.bu||2.10))*100, 1);
     }
 
-    // ── BTTS blend (същата йерархия: OA доминира когато присъства) ──
+    // ── BTTS blend ──
+    // ✅ Тук няма отделен "Pinnacle BTTS" вход в приложението — базата
+    // за сравнение е Poisson/xG стойността на CC.pB ПРЕДИ OA override-а
+    // (запазена долу като pB_base). getOAWeight('btts') контролира колко
+    // тежи OA спрямо тази база (по подразбиране 40%, като преди).
+    var pB_base = CC.pB;
     if (hasOA && oa.btts) {
-      var pB_oa  = oa.btts/100;
-      // Само OA за BTTS (нямаме Pinnacle BTTS тук) → OA напълно замества Poisson
-      CC.pB = clamp(pB_oa, 0.10, 0.88);
+      var pB_oa = oa.btts / 100;
+      var oaWBTTS = clamp(getOAWeight('btts', 40), 0, 100) / 100;
+      CC.pB = clamp(pB_base * (1 - oaWBTTS) + pB_oa * oaWBTTS, 0.10, 0.88);
       CC.fairB = fmt(1/CC.pB);
       CC.eBTTS = fmt((CC.pB - 1/parseFloat(CC.bb||1.75))*100, 1);
     }
+
+    // ── Двоен шанс (1X / X2 / 12) — реален blend ──
+    // ✅ OA дава собствени директни dc_1x/dc_12/dc_x2 вероятности (не
+    // само сборувани от H/D/A). Базата за сравнение е производната сума
+    // от ВЕЧЕ блендирания CC.pH/pD/pA (1X2 blend-ът по-горе), а
+    // getOAWeight('1x'/'x2'/'12') контролира колко тежи OA-нативната
+    // стойност спрямо тази производна база. Без прието тегло → по
+    // подразбиране взима СЪЩОТО тегло като 1X2 (wOA), т.е. поведението
+    // остава идентично с преди, докато потребителят изрично не приеме
+    // отделно тегло за конкретния DC под-пазар.
+    (function(){
+      var dcDerived = { '1x': CC.pH + CC.pD, 'x2': CC.pD + CC.pA, '12': CC.pH + CC.pA };
+      var dcOA = { '1x': oa.dc_1x, 'x2': oa.dc_x2, '12': oa.dc_12 };
+      var ccProbKey  = { '1x': 'p_1x',    'x2': 'p_x2',    '12': 'p_12' };
+      var ccFairKey  = { '1x': 'fair_1x', 'x2': 'fair_x2', '12': 'fair_12' };
+      ['1x','x2','12'].forEach(function(key){
+        var derived = clamp(dcDerived[key], 0.02, 0.98);
+        var oaVal = (hasOA && dcOA[key] != null) ? dcOA[key] / 100 : null;
+        var w = clamp(getOAWeight(key, wOA * 100), 0, 100) / 100;
+        var finalP = (oaVal != null) ? clamp(derived * (1 - w) + oaVal * w, 0.02, 0.98) : derived;
+        CC[ccProbKey[key]] = finalP;
+        CC[ccFairKey[key]] = fmt(1/finalP);
+      });
+    })();
 
     // ── Запазваме blend информацията за показване ──
     CC.blendSources = sources;
@@ -8602,7 +8631,7 @@ function oaRenderCalibrationPanel() {
   // calculate(), който реално чете getOAWeight() — за останалите (1x/
   // x2/12/btts/corners/teamgoals) анализът е диагностичен засега,
   // защото calculate() още няма отделен blend за тях.
-  var LIVE_BLEND_MARKETS = { ft1x2: 1, over: 1 };
+  var LIVE_BLEND_MARKETS = { ft1x2: 1, over: 1, btts: 1, '1x': 1, 'x2': 1, '12': 1 };
   var isLive = !!LIVE_BLEND_MARKETS[BT_STATE.market];
 
   if (!calib || calib.insufficientData) {
