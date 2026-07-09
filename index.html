@@ -8026,6 +8026,21 @@ var BT_MARKETS = {
       if (g == null) return null;
       return g > BT_MARKETS.teamgoals.line ? 1 : 0;
     }
+  },
+  dc: {
+    label: 'Двоен шанс (1X / X2)', sides: ['1x','x2'],
+    settle: function(c){
+      var s = c.status;
+      if (['FT','FT_PEN','AET'].indexOf(s) === -1) return null;
+      if (BT_STATE.etDraw && (s === 'FT_PEN' || s === 'AET')) {
+        // 90-мин равенство преди ET/дузпи → печели И 1X, И X2
+        return 1;
+      }
+      if (c.hg == null || c.ag == null) return null;
+      if (c.side === '1x') return (c.hg >= c.ag) ? 1 : 0;  // Дом или Равен
+      if (c.side === 'x2') return (c.ag >= c.hg) ? 1 : 0;  // Равен или Гост
+      return null;
+    }
   }
 };
 
@@ -8127,6 +8142,7 @@ function btAutoDetectMarket(cands) {
 
   // Разпознаваме по Outcome
   var hasHomeAway = keys.indexOf('home') !== -1 || keys.indexOf('away') !== -1;
+  var hasDC = keys.some(function(k){ return ['1x','dc_1x','home_draw','homedraw','hx','1_x','x2','dc_x2','draw_away','drawaway','xa','x_2'].indexOf(k) !== -1; });
   var hasBtts = keys.some(function(k){ return k === 'yes' || k.indexOf('btts') !== -1; });
   var hasCorners = keys.some(function(k){ return k.indexOf('corner') !== -1; });
   var overKey = keys.find(function(k){ return k.indexOf('over') !== -1; });
@@ -8142,6 +8158,8 @@ function btAutoDetectMarket(cands) {
     if (om) BT_MARKETS.over.line = parseFloat(om[1] + '.' + om[2]);
   } else if (hasBtts) {
     BT_STATE.market = 'btts';
+  } else if (hasDC) {
+    BT_STATE.market = 'dc';
   } else if (hasHomeAway) {
     BT_STATE.market = 'ft1x2';
   }
@@ -8208,6 +8226,9 @@ async function btIngest(fileList) {
     if (o === 'home' || o === 'away') return o;
     if (o === 'yes' || o === 'btts' || o === 'btts_yes') return 'btts';
     if (o.indexOf('corner') !== -1) return 'corners';
+    // Двоен шанс — покриваме познатите варианти на именуване от OddAlerts
+    if (['1x','dc_1x','home_draw','homedraw','hx','1_x'].indexOf(o) !== -1) return '1x';
+    if (['x2','dc_x2','draw_away','drawaway','xa','x_2'].indexOf(o) !== -1) return 'x2';
     if (o.indexOf('over') !== -1) {
       // Разграничаваме корнери от голове по линията
       var m = o.match(/(\d+)_?(\d+)?/);
@@ -8393,7 +8414,7 @@ function btCompute() {
       if (d < range[0] || d > range[1]) return;
     }
     // За 1X2/team goals → home/away отделно. За over/btts/corners → всичко през home filter
-    var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals';
+    var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals' || BT_STATE.market === 'dc';
     var f;
     if (is1x2) {
       f = c.side === 'home' ? BT_STATE.home : BT_STATE.away;
@@ -8419,7 +8440,7 @@ function btCompute() {
     return { n:n, w:w, u:u, wr: n ? w/n*100 : 0, roi: n ? u/n*100 : 0, ao:ao, av:av, be: ao ? 100/ao : 0 };
   }
   var all = agg(bets);
-  var isOneSided = !(BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals');
+  var isOneSided = !(BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals' || BT_STATE.market === 'dc');
   var H = isOneSided ? all : agg(bets.filter(function(b){ return b.side === 'home'; }));
   var A = isOneSided ? { n:0,w:0,u:0,wr:0,roi:0,ao:0,av:0,be:0 } : agg(bets.filter(function(b){ return b.side === 'away'; }));
   var cum = 0, curve = bets.map(function(b,i){ cum += b.pnl; return { i:i+1, pnl:+cum.toFixed(2), date:b.date }; });
@@ -8451,7 +8472,7 @@ function btCls(x) { return x > 0 ? 'var(--grn)' : x < 0 ? '#ff6b6b' : 'var(--dim
 
 // ── Render филтри (home + away) ──
 function btRenderFilters() {
-  var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals';
+  var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals' || BT_STATE.market === 'dc';
   var sidesToRender = is1x2 ? ['home','away'] : ['home'];
   var awayBox = document.getElementById('btFilterAway');
   if (awayBox && !is1x2) awayBox.innerHTML = '';
@@ -8714,7 +8735,7 @@ function btOptBuildSide(combo) {
 
 // Оценява един side филтър върху списък кандидати → метрики
 function btOptEvalSide(cands, side, filter, settleBy) {
-  var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals';
+  var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals' || BT_STATE.market === 'dc';
   var bets = [];
   for (var i = 0; i < cands.length; i++) {
     var c = cands[i];
@@ -8738,7 +8759,7 @@ function btOptEvalSide(cands, side, filter, settleBy) {
 // Settle резултатът и odds се смятат ВЕДНЪЖ (не за всяка комбинация).
 // Връща масив от записи с числови полета за бързо филтриране.
 function btPrecompute(cands, side, settleBy) {
-  var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals';
+  var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals' || BT_STATE.market === 'dc';
   var recs = [];
   for (var i = 0; i < cands.length; i++) {
     var c = cands[i];
@@ -8850,7 +8871,7 @@ function btOptimize(goal) {
     // ВАЖНО: оптимизираме на ЦЕЛИТЕ данни (намира истинския максимум),
     // но показваме train/test за да видиш дали издържа (overfitting проверка)
     var best = {};
-    var is1x2opt = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals';
+    var is1x2opt = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals' || BT_STATE.market === 'dc';
     var optSides = is1x2opt ? ['home','away'] : ['home'];
     optSides.forEach(function(side){
       // ⚡ Предкомпютираме веднъж — settle + odds готови
@@ -8948,7 +8969,7 @@ function btMonthlyRun() {
   setTimeout(function(){
     var minBets = parseInt((document.getElementById('btOptMinBets')||{}).value || '50');
     var settleBy = BT_STATE.settleBy;
-    var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals';
+    var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals' || BT_STATE.market === 'dc';
     var optSides = is1x2 ? ['home','away'] : ['home'];
 
     // Прилагаме period филтър
@@ -9211,11 +9232,11 @@ function btOptRenderResult(best, goal, minBets) {
   var html = '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-top:.3rem">';
   html += '<div style="font-size:.6rem;color:var(--acc);font-weight:700;margin-bottom:.4rem">✓ Best filters for: ' + goalLabels[goal] + '</div>';
 
-  var renderSides = (BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals') ? ['home','away'] : ['home'];
+  var renderSides = (BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals' || BT_STATE.market === 'dc') ? ['home','away'] : ['home'];
   renderSides.forEach(function(side){
     var b = best[side];
     if (!b) return;
-    var is1x2r = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals';
+    var is1x2r = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals' || BT_STATE.market === 'dc';
     var color = side === 'home' ? '#e7b23c' : '#38bdf8';
     var label = side === 'home' ? (is1x2r ? 'HOME' : 'SELECTION') : 'AWAY';
     html += '<div style="margin-bottom:.5rem">';
