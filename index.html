@@ -10642,30 +10642,64 @@ function vbLoadLog() {
     items.sort(function(a,b){ return new Date(b.created_at||0) - new Date(a.created_at||0); });
 
     box.innerHTML = items.map(function(it){
-      var movHtml = '';
+      var obs = Array.isArray(it.observations) ? it.observations : [];
+      obs.sort(function(a,b){ return new Date(a.observed_at||0) - new Date(b.observed_at||0); });
+
+      // ── Таймлайн от observation точки (реалното движение във времето) ──
+      var timelineHtml = '';
+      if (obs.length) {
+        timelineHtml = '<div style="margin-top:.4rem;padding-top:.4rem;border-top:1px solid rgba(255,255,255,.06)">' +
+          '<div style="font-size:.58rem;color:var(--acc);margin-bottom:.25rem">📈 Таймлайн на коефициента (' + obs.length + ' т.)</div>';
+        obs.forEach(function(o, idx){
+          var stepPct = null;
+          if (idx > 0 && obs[idx-1].odds) stepPct = (o.odds - obs[idx-1].odds) / obs[idx-1].odds * 100;
+          var t = o.observed_at ? new Date(o.observed_at) : null;
+          var tStr = t ? (String(t.getUTCHours()).padStart(2,'0') + ':' + String(t.getUTCMinutes()).padStart(2,'0')) : '';
+          var stepColor = stepPct == null ? 'var(--dim)' : stepPct > 0.5 ? 'var(--grn)' : stepPct < -0.5 ? '#ff6b6b' : 'var(--dim)';
+          var stepIcon = stepPct == null ? '🔹' : stepPct > 0.5 ? '📈' : stepPct < -0.5 ? '📉' : '➡️';
+          timelineHtml += '<div style="font-size:.6rem;padding:.15rem 0;color:' + stepColor + '">' +
+            stepIcon + ' ' + (o.odds != null ? o.odds.toFixed(2) : '—') +
+            (o.prob != null ? ' (' + o.prob.toFixed(1) + '%)' : '') +
+            (o.timing ? ' · ' + o.timing : '') +
+            (tStr ? ' · ' + tStr : '') +
+            (stepPct != null ? ' <span>[' + (stepPct>=0?'+':'') + stepPct.toFixed(1) + '%]</span>' : ' <span style="color:var(--dim)">[opening]</span>') +
+          '</div>';
+        });
+        if (obs.length > 1) {
+          var totalPct = (obs[obs.length-1].odds - obs[0].odds) / obs[0].odds * 100;
+          var totalColor = totalPct > 1 ? 'var(--grn)' : totalPct < -1 ? '#ff6b6b' : 'var(--dim)';
+          timelineHtml += '<div style="font-size:.62rem;font-weight:700;color:' + totalColor + ';margin-top:.2rem">Общо движение: ' + (totalPct>=0?'+':'') + totalPct.toFixed(1) + '%</div>';
+        }
+        timelineHtml += '</div>';
+      }
+
+      // ── Реално изигран коефициент (отделно от observation таймлайна) ──
+      var playedHtml = '';
       if (it.played_odds != null && it.alert_odds) {
         var movPct = (it.played_odds - it.alert_odds) / it.alert_odds * 100;
         var movColor = movPct > 1 ? 'var(--grn)' : movPct < -1 ? '#ff6b6b' : 'var(--dim)';
         var movIcon = movPct > 1 ? '📈' : movPct < -1 ? '📉' : '➡️';
         var edgeAtPlay = (it.prob!=null) ? ((it.prob/100*it.played_odds - 1)*100) : null;
-        movHtml =
+        playedHtml =
           '<div style="font-size:.62rem;margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06)">' +
-            '🎯 Изигран: <b>' + it.played_odds.toFixed(2) + '</b> ' +
+            '🎯 Изигран: <b>' + it.played_odds.toFixed(2) + '</b> спрямо opening ' +
             '<span style="color:' + movColor + '">' + movIcon + ' ' + (movPct>=0?'+':'') + movPct.toFixed(1) + '%</span>' +
             (edgeAtPlay != null ? ' · Value@игра: <b>' + edgeAtPlay.toFixed(1) + '%</b>' : '') +
           '</div>';
       } else {
-        movHtml =
+        playedHtml =
           '<div style="margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:.4rem">' +
             '<input type="number" step=".01" id="vbLogPlayedInput_' + it.id + '" placeholder="изигран коеф." style="flex:1;font-size:.62rem;padding:4px">' +
             '<button class="btn btn-p" style="font-size:.58rem;padding:4px 8px" onclick="vbUpdatePlayedOdds(' + it.id + ')">💾</button>' +
           '</div>';
       }
+
       return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.55rem;margin-bottom:.4rem">' +
         '<div style="font-size:.66rem;font-weight:700;color:var(--txt)">' + it.home + ' <span style="color:var(--dim)">vs</span> ' + it.away + '</div>' +
-        '<div style="font-size:.58rem;color:var(--dim)">' + (it.league||'') + ' · ' + it.bg_date_str + ' ' + it.bg_time_str + ' · ' + it.side + ' ' + it.timing + '</div>' +
-        '<div style="font-size:.6rem;margin-top:.2rem">Вер. ' + (it.prob!=null?it.prob+'%':'—') + ' · Даден коеф. <b>' + (it.alert_odds!=null?it.alert_odds:'—') + '</b> · Value ' + (it.value_pct!=null?it.value_pct+'%':'—') + '</div>' +
-        movHtml +
+        '<div style="font-size:.58rem;color:var(--dim)">' + (it.league||'') + ' · ' + it.bg_date_str + ' ' + it.bg_time_str + ' · ' + it.side + '</div>' +
+        '<div style="font-size:.6rem;margin-top:.2rem">Opening вер. ' + (it.prob!=null?it.prob+'%':'—') + ' · Opening коеф. <b>' + (it.alert_odds!=null?it.alert_odds:'—') + '</b> · Value ' + (it.value_pct!=null?it.value_pct+'%':'—') + '</div>' +
+        timelineHtml +
+        playedHtml +
       '</div>';
     }).join('');
   }).catch(function(e){

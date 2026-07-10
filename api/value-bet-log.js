@@ -21,36 +21,73 @@ async function oraFetch(path, method, body) {
   return { ok: res.ok, status: res.status, text, json };
 }
 
+function normKey(row) {
+  return (row.home||'').trim().toLowerCase() + '|' + (row.away||'').trim().toLowerCase() +
+    '|' + (row.kickoff_utc||'').slice(0,16) + '|' + (row.side||'').toLowerCase();
+}
+
 export default async function handler(req, res) {
   try {
     if (req.method === "GET") {
       const r = await oraFetch(`/${TABLE}/?limit=500&orderBy=id:desc`, "GET");
       if (!r.ok) { res.status(200).json({ ok: true, items: [] }); return; }
-      res.status(200).json({ ok: true, items: r.json?.items || [] });
+      const items = (r.json?.items || []).map((it) => {
+        let obs = [];
+        try { obs = it.observations ? JSON.parse(it.observations) : []; } catch (e) {}
+        return { ...it, observations: obs };
+      });
+      res.status(200).json({ ok: true, items });
       return;
     }
 
     if (req.method === "POST") {
       const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
       if (!rows.length) { res.status(400).json({ ok: false, error: "missing_rows" }); return; }
-      let okCount = 0;
+
+      // ── Тегли текущия лог веднъж, за да разпознаваме дублирани мачове ──
+      const existingResp = await oraFetch(`/${TABLE}/?limit=500`, "GET");
+      const existingItems = existingResp.json?.items || [];
+      const existingByKey = {};
+      existingItems.forEach((it) => { existingByKey[normKey(it)] = it; });
+
+      let created = 0, appended = 0;
       const errors = [];
+
       for (const row of rows) {
-        const payload = {
-          home: row.home, away: row.away, league: row.league || "",
-          side: row.side, timing: row.timing,
-          prob: row.prob, implied_odds: row.implied_odds,
-          alert_odds: row.alert_odds, value_pct: row.value_pct,
-          kickoff_utc: row.kickoff_utc, bg_date_str: row.bg_date_str, bg_time_str: row.bg_time_str,
-          played_odds: row.played_odds != null ? row.played_odds : null,
-          played_at: row.played_at || null,
-          created_at: new Date().toISOString(),
+        const key = normKey(row);
+        const newObs = {
+          odds: row.alert_odds, prob: row.prob, value_pct: row.value_pct,
+          timing: row.timing, observed_at: new Date().toISOString(),
         };
-        const r = await oraFetch(`/${TABLE}/`, "POST", payload);
-        if (r.ok) okCount++;
-        else errors.push(`${row.home} vs ${row.away}: HTTP ${r.status} ${r.text.slice(0, 150)}`);
+        const match = existingByKey[key];
+
+        if (match) {
+          // ── Съществуващ мач/пазар → добавяме нова observation точка ──
+          let obs = [];
+          try { obs = match.observations ? JSON.parse(match.observations) : []; } catch (e) {}
+          obs.push(newObs);
+          const r = await oraFetch(`/${TABLE}/${match.id}`, "PATCH", { observations: JSON.stringify(obs) });
+          if (r.ok) appended++;
+          else errors.push(`${row.home} vs ${row.away}: HTTP ${r.status} (append) ${r.text.slice(0, 150)}`);
+        } else {
+          // ── Нов мач/пазар → нов ред, с първата observation вградена ──
+          const payload = {
+            home: row.home, away: row.away, league: row.league || "",
+            side: row.side, timing: row.timing,
+            prob: row.prob, implied_odds: row.implied_odds,
+            alert_odds: row.alert_odds, value_pct: row.value_pct,
+            kickoff_utc: row.kickoff_utc, bg_date_str: row.bg_date_str, bg_time_str: row.bg_time_str,
+            played_odds: row.played_odds != null ? row.played_odds : null,
+            played_at: row.played_at || null,
+            observations: JSON.stringify([newObs]),
+            created_at: new Date().toISOString(),
+          };
+          const r = await oraFetch(`/${TABLE}/`, "POST", payload);
+          if (r.ok) created++;
+          else errors.push(`${row.home} vs ${row.away}: HTTP ${r.status} (create) ${r.text.slice(0, 150)}`);
+        }
       }
-      res.status(200).json({ ok: okCount > 0, count: okCount, total: rows.length, errors });
+      res.status(200).json({ ok: (created + appended) > 0, created, appended, total: rows.length, errors });
       return;
     }
 
