@@ -10641,7 +10641,25 @@ function vbLoadLog() {
 
     items.sort(function(a,b){ return new Date(b.created_at||0) - new Date(a.created_at||0); });
 
-    box.innerHTML = items.map(function(it){
+    // ── Обобщена статистика: средно закъснение + среден спад ──
+    var withPlayed = items.filter(function(it){ return it.played_odds != null && it.alert_odds && it.created_at && it.played_at; });
+    var summaryHtml = '';
+    if (withPlayed.length) {
+      var delays = withPlayed.map(function(it){ return Math.max(0, Math.round((new Date(it.played_at) - new Date(it.created_at)) / 60000)); });
+      var drops = withPlayed.map(function(it){ return (it.played_odds - it.alert_odds) / it.alert_odds * 100; });
+      var avgDelay = delays.reduce(function(a,b){return a+b;},0) / delays.length;
+      var avgDrop = drops.reduce(function(a,b){return a+b;},0) / drops.length;
+      var inTime = delays.filter(function(d){ return d <= 5; }).length;
+      var late = delays.filter(function(d){ return d > 20; }).length;
+      summaryHtml =
+        '<div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.25);border-radius:8px;padding:.55rem;margin-bottom:.6rem">' +
+          '<div style="font-size:.62rem;color:var(--acc);font-weight:600;margin-bottom:.3rem">📊 Обобщено (' + withPlayed.length + ' с изигран коеф.)</div>' +
+          '<div style="font-size:.62rem;color:var(--txt)">Средно закъснение: <b>' + avgDelay.toFixed(0) + ' мин</b> · Среден спад: <b style="color:' + (avgDrop<0?'#ff6b6b':'var(--grn)') + '">' + (avgDrop>=0?'+':'') + avgDrop.toFixed(1) + '%</b></div>' +
+          '<div style="font-size:.6rem;color:var(--dim);margin-top:.2rem">✅ Хванати до 5 мин: ' + inTime + ' · ⚠️ Закъснели >20 мин: ' + late + '</div>' +
+        '</div>';
+    }
+
+    box.innerHTML = summaryHtml + items.map(function(it){
       var obs = Array.isArray(it.observations) ? it.observations : [];
       obs.sort(function(a,b){ return new Date(a.observed_at||0) - new Date(b.observed_at||0); });
 
@@ -10680,10 +10698,31 @@ function vbLoadLog() {
         var movColor = movPct > 1 ? 'var(--grn)' : movPct < -1 ? '#ff6b6b' : 'var(--dim)';
         var movIcon = movPct > 1 ? '📈' : movPct < -1 ? '📉' : '➡️';
         var edgeAtPlay = (it.prob!=null) ? ((it.prob/100*it.played_odds - 1)*100) : null;
+
+        // ✅ Закъснение между сигнала (created_at) и реалния залог (played_at)
+        var delayStr = '—';
+        if (it.created_at && it.played_at) {
+          var delayMin = Math.round((new Date(it.played_at) - new Date(it.created_at)) / 60000);
+          if (delayMin < 0) delayMin = 0;
+          delayStr = delayMin < 60 ? (delayMin + ' мин') : (Math.floor(delayMin/60) + 'ч ' + (delayMin%60) + 'мин');
+        }
+        // Колко близо до началото на мача е заложено (контекст за CLV)
+        var toKickoffStr = '';
+        if (it.played_at && it.kickoff_utc) {
+          var minToKickoff = Math.round((new Date(it.kickoff_utc) - new Date(it.played_at)) / 60000);
+          toKickoffStr = minToKickoff >= 0 ? (' · ' + minToKickoff + ' мин преди начало') : (' · ' + Math.abs(minToKickoff) + ' мин СЛЕД начало ⚠️');
+        }
+
+        var delayColor = (it.created_at && it.played_at) ?
+          (Math.round((new Date(it.played_at) - new Date(it.created_at)) / 60000) <= 5 ? 'var(--grn)' :
+           Math.round((new Date(it.played_at) - new Date(it.created_at)) / 60000) <= 20 ? 'var(--yellow)' : '#ff6b6b')
+          : 'var(--dim)';
+
         playedHtml =
           '<div style="font-size:.62rem;margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06)">' +
+            '<div style="margin-bottom:.2rem">⏱ Закъснение до залог: <b style="color:' + delayColor + '">' + delayStr + '</b>' + toKickoffStr + '</div>' +
             '🎯 Изигран: <b>' + it.played_odds.toFixed(2) + '</b> спрямо opening ' +
-            '<span style="color:' + movColor + '">' + movIcon + ' ' + (movPct>=0?'+':'') + movPct.toFixed(1) + '%</span>' +
+            '<span style="color:' + movColor + '">' + movIcon + ' ' + (movPct>=0?'+':'') + movPct.toFixed(1) + '% спад' + '</span>' +
             (edgeAtPlay != null ? ' · Value@игра: <b>' + edgeAtPlay.toFixed(1) + '%</b>' : '') +
           '</div>';
       } else {
