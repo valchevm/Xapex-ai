@@ -3637,6 +3637,43 @@ input::placeholder, textarea::placeholder {
   </div>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════════
+     📒 VALUE BET ТРАКЕР — засича данни от 1 или няколко value bet
+     известия наведнъж, пази ги в Oracle (НЕ localStorage), позволява
+     ръчно въвеждане на реално изигран коефициент, и следи спад/ръст
+     на коефициента спрямо оригиналния сигнал.
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="card" id="vbTrackerCard">
+  <div class="chdr" style="cursor:pointer" onclick="toggleVbTracker()">
+    📒 Value Bet Тракер
+    <span id="vbTrackerArrow" style="margin-left:auto;color:var(--dim)">▼</span>
+  </div>
+  <div id="vbTrackerPanel" style="display:none">
+    <div style="font-size:.62rem;color:var(--dim);margin-bottom:.7rem;line-height:1.5">
+      Постави 1 или няколко value bet известия наведнъж (всяко започва с 🚨). Засича отбори, лига, пазар, дата/час, вероятност, implied коефициент, дадения коефициент и value%. После можеш да въведеш на какъв коефициент реално си играл(а) — системата пресмята спада/ръста спрямо оригиналния сигнал. Пази се в Oracle, не в браузъра.
+    </div>
+
+    <textarea id="vbPasteInput" rows="10" placeholder="Постави тук едно или няколко известия (всяко започва с 🚨 New Value Bets Found...)"
+      style="width:100%;padding:.6rem;background:#0a1429;border:1px solid var(--bord);
+      border-radius:7px;color:var(--txt);font-family:var(--mono);font-size:12px;
+      resize:vertical;line-height:1.4;box-sizing:border-box;margin-bottom:.5rem"></textarea>
+
+    <button class="btn btn-p btn-action" onclick="vbParseAndSave()" style="width:100%;margin-bottom:.6rem">
+      🔍 Разчети и запази всички
+    </button>
+
+    <div id="vbParsePreview"></div>
+
+    <div style="margin-top:.9rem;border-top:1px solid var(--bord);padding-top:.6rem">
+      <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem">
+        <span style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Проследени залози</span>
+        <button class="btn btn-sec" style="margin-left:auto;font-size:.58rem;padding:3px 8px" onclick="vbLoadLog()">🔄 Обнови</button>
+      </div>
+      <div id="vbLogList" style="font-size:.62rem;color:var(--dim)">Зареждане...</div>
+    </div>
+  </div>
+</div>
+
 <div class="card" id="filterCheckCard">
   <div class="chdr" style="cursor:pointer" onclick="toggleFilterCheck()">
     🎯 Проверка на филтри
@@ -10473,6 +10510,188 @@ async function tgDeleteQueueItem(id) {
     tgRenderQueue();
   } catch(e){}
 }
+
+function toggleVbTracker() {
+  var p = document.getElementById('vbTrackerPanel');
+  var a = document.getElementById('vbTrackerArrow');
+  if (!p || !a) return;
+  var shown = p.style.display !== 'none';
+  p.style.display = shown ? 'none' : 'block';
+  a.textContent   = shown ? '▶' : '▼';
+  if (!shown) vbLoadLog();
+}
+
+// ── Парсва ЕДНО известие (текстов къс) → структуриран обект ──
+function vbParseOneAlert(chunk) {
+  var sideM   = chunk.match(/⚙️\s*(Home|Away|Draw)\s+(Opening|Closing)/i);
+  var teamsM  = chunk.match(/🆚\s*(.+?)\s+vs\.?\s+(.+)/i);
+  var leagueM = chunk.match(/🏆\s*(.+)/);
+  var dateM   = chunk.match(/📆\s*(\w+)\s+(\d+)\w*\s+at\s+(\d{1,2}):(\d{2})\s*\(GMT\)/i);
+  var probM   = chunk.match(/Probability:\s*([\d.]+)%\s*\(([\d.]+)\)/i);
+  var oddsM   = chunk.match(/📉?\s*Odds:\s*([\d.]+)/i);
+  var valueM  = chunk.match(/Value:\s*([\d.]+)%/i);
+  if (!teamsM || !dateM) return null;
+
+  var weekday = dateM[1], day = parseInt(dateM[2],10), hourGmt = parseInt(dateM[3],10), minGmt = parseInt(dateM[4],10);
+  var anchorUtc = resolveNextDate(weekday, day, hourGmt, minGmt);
+  if (!anchorUtc) return null;
+  var ukOffset = ukOffsetForDate(anchorUtc);
+  var kickoffUtc = new Date(anchorUtc.getTime() - ukOffset * 3600 * 1000);
+  var bgOffset = bgOffsetForDate(kickoffUtc);
+  var bgTime = new Date(kickoffUtc.getTime() + bgOffset*3600*1000);
+  var bgStr = String(bgTime.getUTCHours()).padStart(2,'0') + ':' + String(bgTime.getUTCMinutes()).padStart(2,'0');
+  var bgDateStr = bgTime.getUTCDate() + '.' + (bgTime.getUTCMonth()+1) + '.' + bgTime.getUTCFullYear();
+
+  return {
+    side: sideM ? sideM[1] : '?',
+    timing: sideM ? sideM[2] : '?',
+    home: teamsM[1].trim(),
+    away: teamsM[2].trim(),
+    league: leagueM ? leagueM[1].trim() : '',
+    prob: probM ? parseFloat(probM[1]) : null,
+    implied_odds: probM ? parseFloat(probM[2]) : null,
+    alert_odds: oddsM ? parseFloat(oddsM[1]) : null,
+    value_pct: valueM ? parseFloat(valueM[1]) : null,
+    kickoff_utc: kickoffUtc.toISOString(),
+    bg_date_str: bgDateStr,
+    bg_time_str: bgStr
+  };
+}
+
+// ── Разделя paste-натия текст на отделни известия по 🚨 и парсва всяко ──
+function vbParseMultiple(text) {
+  var chunks = text.split(/(?=🚨)/).map(function(s){ return s.trim(); }).filter(Boolean);
+  var out = [];
+  chunks.forEach(function(c){
+    var p = vbParseOneAlert(c);
+    if (p) out.push(p);
+  });
+  return out;
+}
+
+var VB_PENDING = [];
+
+function vbParseAndSave() {
+  var text = document.getElementById('vbPasteInput').value;
+  var box = document.getElementById('vbParsePreview');
+  if (!text.trim()) return;
+
+  var parsed = vbParseMultiple(text);
+  if (!parsed.length) {
+    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Не успях да разпозная нито едно известие — провери формата.</div>';
+    return;
+  }
+  VB_PENDING = parsed;
+
+  var html = parsed.map(function(p, i){
+    return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.5rem">' +
+      '<div style="font-size:.72rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">' + p.home + ' <span style="color:var(--dim)">vs</span> ' + p.away + '</div>' +
+      '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.3rem">🏆 ' + (p.league||'—') + ' · 🕐 ' + p.bg_date_str + ' ' + p.bg_time_str + ' (BG)</div>' +
+      '<div style="font-size:.65rem;margin-bottom:.3rem">📊 ' + p.side + ' ' + p.timing + ' · Вероятност <b>' + (p.prob!=null?p.prob+'%':'—') + '</b> · Implied <b>' + (p.implied_odds!=null?p.implied_odds:'—') + '</b></div>' +
+      '<div style="font-size:.65rem;margin-bottom:.5rem">💰 Даден коеф.: <b>' + (p.alert_odds!=null?p.alert_odds:'—') + '</b> · Value: <b style="color:var(--grn)">' + (p.value_pct!=null?p.value_pct+'%':'—') + '</b></div>' +
+      '<div style="display:flex;gap:.4rem;align-items:center">' +
+        '<input type="number" step=".01" id="vbPlayedOdds_' + i + '" placeholder="изигран коеф. (по избор сега)" style="flex:1;font-size:.65rem;padding:6px">' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  html += '<button class="btn btn-p btn-action" style="width:100%" onclick="vbSaveAllPending()">💾 Запази всички (' + parsed.length + ')</button>';
+  box.innerHTML = html;
+}
+
+function vbSaveAllPending() {
+  if (!VB_PENDING.length) return;
+  var rows = VB_PENDING.map(function(p, i){
+    var el = document.getElementById('vbPlayedOdds_' + i);
+    var playedOdds = el && el.value !== '' ? parseFloat(el.value) : null;
+    var row = Object.assign({}, p);
+    if (playedOdds != null) {
+      row.played_odds = playedOdds;
+      row.played_at = new Date().toISOString();
+    }
+    return row;
+  });
+
+  fetch('/api/value-bet-log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rows: rows })
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if (data && data.ok) {
+      if (typeof showToast === 'function') showToast('✅ Запазени ' + (data.count||rows.length) + ' залога', 'success');
+      document.getElementById('vbPasteInput').value = '';
+      document.getElementById('vbParsePreview').innerHTML = '';
+      VB_PENDING = [];
+      vbLoadLog();
+    } else {
+      if (typeof showToast === 'function') showToast('❌ ' + (data && data.error ? data.error : 'Грешка при запис'), 'error');
+    }
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+  });
+}
+
+function vbLoadLog() {
+  var box = document.getElementById('vbLogList');
+  if (!box) return;
+  box.innerHTML = 'Зареждане...';
+  fetch('/api/value-bet-log').then(function(r){ return r.json(); }).then(function(data){
+    var items = (data && data.items) || [];
+    if (!items.length) { box.innerHTML = '<div style="text-align:center;padding:.5rem 0">Няма запазени залози още.</div>'; return; }
+
+    items.sort(function(a,b){ return new Date(b.created_at||0) - new Date(a.created_at||0); });
+
+    box.innerHTML = items.map(function(it){
+      var movHtml = '';
+      if (it.played_odds != null && it.alert_odds) {
+        var movPct = (it.played_odds - it.alert_odds) / it.alert_odds * 100;
+        var movColor = movPct > 1 ? 'var(--grn)' : movPct < -1 ? '#ff6b6b' : 'var(--dim)';
+        var movIcon = movPct > 1 ? '📈' : movPct < -1 ? '📉' : '➡️';
+        var edgeAtPlay = (it.prob!=null) ? ((it.prob/100*it.played_odds - 1)*100) : null;
+        movHtml =
+          '<div style="font-size:.62rem;margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06)">' +
+            '🎯 Изигран: <b>' + it.played_odds.toFixed(2) + '</b> ' +
+            '<span style="color:' + movColor + '">' + movIcon + ' ' + (movPct>=0?'+':'') + movPct.toFixed(1) + '%</span>' +
+            (edgeAtPlay != null ? ' · Value@игра: <b>' + edgeAtPlay.toFixed(1) + '%</b>' : '') +
+          '</div>';
+      } else {
+        movHtml =
+          '<div style="margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:.4rem">' +
+            '<input type="number" step=".01" id="vbLogPlayedInput_' + it.id + '" placeholder="изигран коеф." style="flex:1;font-size:.62rem;padding:4px">' +
+            '<button class="btn btn-p" style="font-size:.58rem;padding:4px 8px" onclick="vbUpdatePlayedOdds(' + it.id + ')">💾</button>' +
+          '</div>';
+      }
+      return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.55rem;margin-bottom:.4rem">' +
+        '<div style="font-size:.66rem;font-weight:700;color:var(--txt)">' + it.home + ' <span style="color:var(--dim)">vs</span> ' + it.away + '</div>' +
+        '<div style="font-size:.58rem;color:var(--dim)">' + (it.league||'') + ' · ' + it.bg_date_str + ' ' + it.bg_time_str + ' · ' + it.side + ' ' + it.timing + '</div>' +
+        '<div style="font-size:.6rem;margin-top:.2rem">Вер. ' + (it.prob!=null?it.prob+'%':'—') + ' · Даден коеф. <b>' + (it.alert_odds!=null?it.alert_odds:'—') + '</b> · Value ' + (it.value_pct!=null?it.value_pct+'%':'—') + '</div>' +
+        movHtml +
+      '</div>';
+    }).join('');
+  }).catch(function(e){
+    box.innerHTML = '<div style="color:var(--red)">❌ ' + e.message + '</div>';
+  });
+}
+
+window.vbUpdatePlayedOdds = function(id) {
+  var el = document.getElementById('vbLogPlayedInput_' + id);
+  var val = el && el.value !== '' ? parseFloat(el.value) : null;
+  if (val == null || isNaN(val)) return;
+  fetch('/api/value-bet-log', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id, played_odds: val, played_at: new Date().toISOString() })
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if (data && data.ok) {
+      if (typeof showToast === 'function') showToast('✅ Изигран коефициент записан', 'success');
+      vbLoadLog();
+    } else {
+      if (typeof showToast === 'function') showToast('❌ Грешка при запис', 'error');
+    }
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+  });
+};
 
 function toggleFilterCheck() {
   var p = document.getElementById('filterCheckPanel');
