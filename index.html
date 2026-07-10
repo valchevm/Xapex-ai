@@ -10316,6 +10316,25 @@ function bgOffsetForDate(utcDate) {
   return (utcDate >= dstStart && utcDate < dstEnd) ? 3 : 2;
 }
 
+// ✅ OddAlerts подписва часовете с "(GMT)", но на практика това е
+// UK МЕСТНО време — през лятото UK е на BST (UTC+1), не истински
+// UTC+0. Великобритания и България сменят лятно/зимно време на един
+// и същи ден в годината, затова разликата им е ВИНАГИ точно 2 часа —
+// но за да пазим коректен ИСТИНСКИ UTC (нужен на cron-а за сравнение
+// с реалното системно време), първо сваляме BST офсета, после
+// добавяме българския.
+function ukOffsetForDate(anchorDate) {
+  var y = anchorDate.getUTCFullYear();
+  function lastSunday(month) {
+    var d = new Date(Date.UTC(y, month + 1, 0));
+    d.setUTCDate(d.getUTCDate() - d.getUTCDay());
+    return d;
+  }
+  var dstStart = lastSunday(2); dstStart.setUTCHours(1,0,0,0);
+  var dstEnd   = lastSunday(9); dstEnd.setUTCHours(1,0,0,0);
+  return (anchorDate >= dstStart && anchorDate < dstEnd) ? 1 : 0; // BST=+1, GMT(зима)=0
+}
+
 // Разпознава ден от седмица + числото на месеца → намира следващата
 // реална дата (тази или следваща седмица) спрямо текущия момент.
 var WD_MAP = {sun:0,mon:1,tue:2,wed:3,thu:4,fri:5,sat:6};
@@ -10361,11 +10380,15 @@ function tgParseAlert() {
   var odds    = oddsM ? parseFloat(oddsM[1]) : null;
   var value   = valueM ? parseFloat(valueM[1]) : null;
 
-  var kickoffUtc = resolveNextDate(weekday, day, hourGmt, minGmt);
-  if (!kickoffUtc) {
+  var anchorUtc = resolveNextDate(weekday, day, hourGmt, minGmt);
+  if (!anchorUtc) {
     box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Не успях да изчисля точната дата от "' + weekday + ' ' + day + '".</div>';
     return;
   }
+  // ✅ anchorUtc третира подадения час като суров анкер (не непременно
+  // истински UTC) — OddAlerts "(GMT)" реално е UK местно време.
+  var ukOffset = ukOffsetForDate(anchorUtc);
+  var kickoffUtc = new Date(anchorUtc.getTime() - ukOffset * 3600 * 1000); // истински UTC
   var bgOffset = bgOffsetForDate(kickoffUtc);
   var bgTime = new Date(kickoffUtc.getTime() + bgOffset*3600*1000);
   var bgStr = String(bgTime.getUTCHours()).padStart(2,'0') + ':' + String(bgTime.getUTCMinutes()).padStart(2,'0');
