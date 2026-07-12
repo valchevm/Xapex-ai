@@ -67,6 +67,7 @@ export default async function handler(req, res) {
         `🏆 ${it.league || ""}\n` +
         `⚙️ ${it.side} ${it.timing}\n` +
         (it.prob != null ? `✨ Вероятност: ${it.prob}%\n` : "") +
+        (it.peak_prob != null ? `🏔️ Peak: ${it.peak_prob}%\n` : "") +
         (it.odds != null ? `📉 Коефициент: ${it.odds}\n` : "") +
         (it.value_pct != null ? `📈 Value: +${it.value_pct}%\n` : "") +
         `⏰ Начало: ${it.bg_date_str} ${it.bg_time_str} (българско време)`;

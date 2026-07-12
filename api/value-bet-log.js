@@ -56,8 +56,8 @@ export default async function handler(req, res) {
       for (const row of rows) {
         const key = normKey(row);
         const newObs = {
-          odds: row.alert_odds, prob: row.prob, value_pct: row.value_pct,
-          timing: row.timing, observed_at: new Date().toISOString(),
+          odds: row.alert_odds, prob: row.prob, peak_prob: row.peak_prob != null ? row.peak_prob : null,
+          value_pct: row.value_pct, timing: row.timing, observed_at: new Date().toISOString(),
         };
         const match = existingByKey[key];
 
@@ -74,7 +74,7 @@ export default async function handler(req, res) {
           const payload = {
             home: row.home, away: row.away, league: row.league || "",
             side: row.side, timing: row.timing,
-            prob: row.prob, implied_odds: row.implied_odds,
+            prob: row.prob, implied_odds: row.implied_odds, peak_prob: row.peak_prob != null ? row.peak_prob : null,
             alert_odds: row.alert_odds, value_pct: row.value_pct,
             kickoff_utc: row.kickoff_utc, bg_date_str: row.bg_date_str, bg_time_str: row.bg_time_str,
             played_odds: row.played_odds != null ? row.played_odds : null,

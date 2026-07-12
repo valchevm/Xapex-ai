@@ -10398,6 +10398,7 @@ function tgParseAlert() {
   var leagueM = text.match(/🏆\s*(.+)/);
   var dateM   = text.match(/📆\s*(\w+)\s+(\d+)\w*\s+at\s+(\d{1,2}):(\d{2})\s*\(GMT\)/i);
   var probM   = text.match(/Probability:\s*([\d.]+)%\s*\(([\d.]+)\)/i);
+  var peakM   = text.match(/Peak Probability:\s*([\d.]+)%/i);
   var oddsM   = text.match(/📉?\s*Odds:\s*([\d.]+)/i);
   var valueM  = text.match(/Value:\s*([\d.]+)%/i);
 
@@ -10414,6 +10415,7 @@ function tgParseAlert() {
   var weekday = dateM[1], day = parseInt(dateM[2],10), hourGmt = parseInt(dateM[3],10), minGmt = parseInt(dateM[4],10);
   var prob    = probM ? parseFloat(probM[1]) : null;
   var fairOdds= probM ? parseFloat(probM[2]) : null;
+  var peakProb= peakM ? parseFloat(peakM[1]) : null;
   var odds    = oddsM ? parseFloat(oddsM[1]) : null;
   var value   = valueM ? parseFloat(valueM[1]) : null;
 
@@ -10433,7 +10435,7 @@ function tgParseAlert() {
 
   window._tgLastParsed = {
     side: side, timing: timing, home: home, away: away, league: league,
-    prob: prob, fairOdds: fairOdds, odds: odds, value: value,
+    prob: prob, fairOdds: fairOdds, peak_prob: peakProb, odds: odds, value: value,
     kickoff_utc: kickoffUtc.toISOString(), bg_time_str: bgStr, bg_date_str: bgDateStr,
     bg_offset: bgOffset
   };
@@ -10445,6 +10447,7 @@ function tgParseAlert() {
       '<div class="mw-result-row" style="margin-bottom:.5rem">' +
         '<span class="mw-chip">' + side + ' · ' + timing + '</span>' +
         (prob != null ? '<span class="mw-chip">Prob: ' + prob + '%</span>' : '') +
+        (peakProb != null ? '<span class="mw-chip" style="color:var(--pur)">🏔️ Peak: ' + peakProb + '%</span>' : '') +
         (odds != null ? '<span class="mw-chip">Odds: ' + odds + '</span>' : '') +
         (value != null ? '<span class="mw-chip" style="color:var(--grn)">Value: +' + value + '%</span>' : '') +
       '</div>' +
@@ -10460,7 +10463,7 @@ async function tgScheduleAlert() {
   var row = {
     home: d.home, away: d.away, league: d.league,
     side: d.side, timing: d.timing,
-    prob: d.prob, fair_odds: d.fairOdds, odds: d.odds, value_pct: d.value,
+    prob: d.prob, fair_odds: d.fairOdds, peak_prob: d.peak_prob, odds: d.odds, value_pct: d.value,
     kickoff_utc: d.kickoff_utc, bg_time_str: d.bg_time_str, bg_date_str: d.bg_date_str,
     sent: 0, created_at: new Date().toISOString()
   };
@@ -10528,6 +10531,7 @@ function vbParseOneAlert(chunk) {
   var leagueM = chunk.match(/🏆\s*(.+)/);
   var dateM   = chunk.match(/📆\s*(\w+)\s+(\d+)\w*\s+at\s+(\d{1,2}):(\d{2})\s*\(GMT\)/i);
   var probM   = chunk.match(/Probability:\s*([\d.]+)%\s*\(([\d.]+)\)/i);
+  var peakM   = chunk.match(/Peak Probability:\s*([\d.]+)%/i);
   var oddsM   = chunk.match(/📉?\s*Odds:\s*([\d.]+)/i);
   var valueM  = chunk.match(/Value:\s*([\d.]+)%/i);
   if (!teamsM || !dateM) return null;
@@ -10550,6 +10554,7 @@ function vbParseOneAlert(chunk) {
     league: leagueM ? leagueM[1].trim() : '',
     prob: probM ? parseFloat(probM[1]) : null,
     implied_odds: probM ? parseFloat(probM[2]) : null,
+    peak_prob: peakM ? parseFloat(peakM[1]) : null,
     alert_odds: oddsM ? parseFloat(oddsM[1]) : null,
     value_pct: valueM ? parseFloat(valueM[1]) : null,
     kickoff_utc: kickoffUtc.toISOString(),
@@ -10587,7 +10592,9 @@ function vbParseAndSave() {
     return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.5rem">' +
       '<div style="font-size:.72rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">' + p.home + ' <span style="color:var(--dim)">vs</span> ' + p.away + '</div>' +
       '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.3rem">🏆 ' + (p.league||'—') + ' · 🕐 ' + p.bg_date_str + ' ' + p.bg_time_str + ' (BG)</div>' +
-      '<div style="font-size:.65rem;margin-bottom:.3rem">📊 ' + p.side + ' ' + p.timing + ' · Вероятност <b>' + (p.prob!=null?p.prob+'%':'—') + '</b> · Implied <b>' + (p.implied_odds!=null?p.implied_odds:'—') + '</b></div>' +
+      '<div style="font-size:.65rem;margin-bottom:.3rem">📊 ' + p.side + ' ' + p.timing + ' · Вероятност <b>' + (p.prob!=null?p.prob+'%':'—') + '</b> · Implied <b>' + (p.implied_odds!=null?p.implied_odds:'—') + '</b>' +
+        (p.peak_prob!=null ? ' · 🏔️ Peak <b style="color:var(--pur)">' + p.peak_prob + '%</b>' : '') +
+      '</div>' +
       '<div style="font-size:.65rem;margin-bottom:.5rem">💰 Даден коеф.: <b>' + (p.alert_odds!=null?p.alert_odds:'—') + '</b> · Value: <b style="color:var(--grn)">' + (p.value_pct!=null?p.value_pct+'%':'—') + '</b></div>' +
       '<div style="display:flex;gap:.4rem;align-items:center">' +
         '<input type="number" step=".01" id="vbPlayedOdds_' + i + '" placeholder="изигран коеф. (по избор сега)" style="flex:1;font-size:.65rem;padding:6px">' +
@@ -10678,6 +10685,7 @@ function vbLoadLog() {
           timelineHtml += '<div style="font-size:.6rem;padding:.15rem 0;color:' + stepColor + '">' +
             stepIcon + ' ' + (o.odds != null ? o.odds.toFixed(2) : '—') +
             (o.prob != null ? ' (' + o.prob.toFixed(1) + '%)' : '') +
+            (o.peak_prob != null ? ' 🏔️' + o.peak_prob.toFixed(1) + '%' : '') +
             (o.timing ? ' · ' + o.timing : '') +
             (tStr ? ' · ' + tStr : '') +
             (stepPct != null ? ' <span>[' + (stepPct>=0?'+':'') + stepPct.toFixed(1) + '%]</span>' : ' <span style="color:var(--dim)">[opening]</span>') +
@@ -10736,7 +10744,7 @@ function vbLoadLog() {
       return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.55rem;margin-bottom:.4rem">' +
         '<div style="font-size:.66rem;font-weight:700;color:var(--txt)">' + it.home + ' <span style="color:var(--dim)">vs</span> ' + it.away + '</div>' +
         '<div style="font-size:.58rem;color:var(--dim)">' + (it.league||'') + ' · ' + it.bg_date_str + ' ' + it.bg_time_str + ' · ' + it.side + '</div>' +
-        '<div style="font-size:.6rem;margin-top:.2rem">Opening вер. ' + (it.prob!=null?it.prob+'%':'—') + ' · Opening коеф. <b>' + (it.alert_odds!=null?it.alert_odds:'—') + '</b> · Value ' + (it.value_pct!=null?it.value_pct+'%':'—') + '</div>' +
+        '<div style="font-size:.6rem;margin-top:.2rem">Opening вер. ' + (it.prob!=null?it.prob+'%':'—') + (it.peak_prob!=null ? ' · 🏔️ Peak ' + it.peak_prob + '%' : '') + ' · Opening коеф. <b>' + (it.alert_odds!=null?it.alert_odds:'—') + '</b> · Value ' + (it.value_pct!=null?it.value_pct+'%':'—') + '</div>' +
         timelineHtml +
         playedHtml +
       '</div>';
