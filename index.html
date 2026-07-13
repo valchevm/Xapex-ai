@@ -3624,16 +3624,16 @@ input::placeholder, textarea::placeholder {
   </div>
   <div id="tgAlertPanel">
     <div style="font-size:.62rem;color:var(--dim);margin-bottom:.7rem;line-height:1.5">
-      Постави текста от OddAlerts value bet известието — засича мач/пазар/GMT час, превръща в българско време и насрочва Telegram съобщение точно в началото на срещата.
+      Постави 1 или няколко известия наведнъж (OddAlerts или OddsTrack формат) — засича мач/пазар/GMT час за всяко, превръща в българско време и насрочва Telegram съобщение точно в началото на всяка среща.
     </div>
 
-    <textarea id="tgAlertPaste" rows="8" placeholder="Постави тук текста от OddAlerts (New Value Bets Found...)"
+    <textarea id="tgAlertPaste" rows="8" placeholder="Постави тук 1 или няколко известия (OddAlerts или OddsTrack формат)..."
       style="width:100%;padding:.6rem;background:#0a1429;border:1px solid var(--bord);
       border-radius:7px;color:var(--txt);font-family:var(--mono);font-size:12px;
       resize:vertical;line-height:1.4;box-sizing:border-box;margin-bottom:.5rem"></textarea>
 
     <button class="btn btn-p btn-action" onclick="tgParseAlert()" style="width:100%;margin-bottom:.6rem">
-      🔍 Разчети
+      🔍 Разчети всички
     </button>
 
     <div id="tgParsedPreview"></div>
@@ -10422,71 +10422,87 @@ function resolveNextDate(weekdayStr, dayNum, hour, minute) {
   return null;
 }
 
+var TG_PENDING = [];
+
 function tgParseAlert() {
   var text = document.getElementById('tgAlertPaste').value;
   var box = document.getElementById('tgParsedPreview');
   if (!text.trim() || !box) return;
 
-  var p = parseAlertBlock(text);
-  if (!p) {
-    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Не успях да разпозная формата — провери дали текстът е копиран изцяло (поддържат се OddAlerts и OddsTrack формати).</div>';
+  var parsed = vbParseMultiple(text); // споделен парсър — поддържа И двата формата, И множество известия наведнъж
+  if (!parsed.length) {
+    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Не успях да разпозная нито едно известие — провери формата (поддържат се OddAlerts и OddsTrack).</div>';
     return;
   }
+  TG_PENDING = parsed;
 
-  window._tgLastParsed = {
-    side: p.side, timing: p.timing, home: p.home, away: p.away, league: p.league,
-    prob: p.prob, fairOdds: p.implied_odds, peak_prob: p.peak_prob, odds: p.alert_odds, value: p.value_pct,
-    kickoff_utc: p.kickoff_utc, bg_time_str: p.bg_time_str, bg_date_str: p.bg_date_str,
-    prob_hist_min: p.prob_hist_min, prob_hist_max: p.prob_hist_max, predictability: p.predictability
-  };
-
-  box.innerHTML =
-    '<div style="background:#0a1429;border:1px solid rgba(56,189,248,.3);border-radius:9px;padding:.7rem">' +
-      '<div style="font-size:.8rem;font-weight:700;color:var(--txt);margin-bottom:.4rem">' + p.home + ' vs ' + p.away + '</div>' +
-      '<div style="font-size:.62rem;color:var(--dim);margin-bottom:.5rem">' + p.league + '</div>' +
-      '<div class="mw-result-row" style="margin-bottom:.5rem">' +
+  var itemsHtml = parsed.map(function(p, i){
+    return '<div style="background:#0a1429;border:1px solid rgba(56,189,248,.3);border-radius:9px;padding:.6rem;margin-bottom:.5rem">' +
+      '<div style="font-size:.76rem;font-weight:700;color:var(--txt);margin-bottom:.3rem">' + p.home + ' vs ' + p.away + '</div>' +
+      '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.4rem">' + (p.league||'') + '</div>' +
+      '<div class="mw-result-row" style="margin-bottom:.4rem">' +
         '<span class="mw-chip">' + p.side + ' · ' + p.timing + '</span>' +
         (p.prob != null ? '<span class="mw-chip">Prob: ' + p.prob + '%</span>' : '') +
-        (p.peak_prob != null ? '<span class="mw-chip" style="color:var(--pur)">🏔️ Peak: ' + p.peak_prob + '%</span>' : '') +
+        (p.peak_prob != null ? '<span class="mw-chip" style="color:var(--pur)">🏔️ ' + p.peak_prob + '%</span>' : '') +
         (p.alert_odds != null ? '<span class="mw-chip">Odds: ' + p.alert_odds + '</span>' : '') +
         (p.value_pct != null ? '<span class="mw-chip" style="color:var(--grn)">Value: +' + p.value_pct + '%</span>' : '') +
-        (p.predictability ? '<span class="mw-chip">Pred: ' + p.predictability + '</span>' : '') +
-        (p.prob_hist_min != null ? '<span class="mw-chip">Hist: ' + p.prob_hist_min + '-' + p.prob_hist_max + '%</span>' : '') +
+        (p.predictability ? '<span class="mw-chip">' + p.predictability + '</span>' : '') +
       '</div>' +
-      '<div style="font-size:.7rem;color:var(--acc);font-weight:600">🇧🇬 Начало: ' + p.bg_date_str + ' в ' + p.bg_time_str + ' (българско време)</div>' +
-      (p.side === '?' ? '<div style="font-size:.58rem;color:var(--yellow);margin-top:.3rem">⚠ Този формат не съдържа явен Home/Away маркер — провери ръчно преди да насрочиш.</div>' : '') +
-      '<button class="btn btn-p btn-action" onclick="tgScheduleAlert()" style="width:100%;margin-top:.6rem">📅 Насрочи в Telegram</button>' +
+      '<div style="font-size:.66rem;color:var(--acc);font-weight:600">🇧🇬 ' + p.bg_date_str + ' в ' + p.bg_time_str + '</div>' +
+      (p.side === '?' ? '<div style="font-size:.56rem;color:var(--yellow);margin-top:.25rem">⚠ Няма явен Home/Away маркер — провери ръчно.</div>' : '') +
+      '<button class="btn btn-sec" style="width:100%;margin-top:.5rem;font-size:.6rem" onclick="tgScheduleOne(' + i + ')">📅 Насрочи само тази</button>' +
     '</div>';
+  }).join('');
+
+  box.innerHTML = itemsHtml +
+    '<button class="btn btn-p btn-action" style="width:100%" onclick="tgScheduleAllPending()">📅 Насрочи всички (' + parsed.length + ')</button>';
 }
 
-async function tgScheduleAlert() {
-  var d = window._tgLastParsed;
-  if (!d) return;
-  var row = {
-    home: d.home, away: d.away, league: d.league,
-    side: d.side, timing: d.timing,
-    prob: d.prob, fair_odds: d.fairOdds, peak_prob: d.peak_prob, odds: d.odds, value_pct: d.value,
-    kickoff_utc: d.kickoff_utc, bg_time_str: d.bg_time_str, bg_date_str: d.bg_date_str,
+function tgRowFromParsed(p) {
+  return {
+    home: p.home, away: p.away, league: p.league,
+    side: p.side, timing: p.timing,
+    prob: p.prob, fair_odds: p.implied_odds, peak_prob: p.peak_prob, odds: p.alert_odds, value_pct: p.value_pct,
+    kickoff_utc: p.kickoff_utc, bg_time_str: p.bg_time_str, bg_date_str: p.bg_date_str,
     sent: 0, created_at: new Date().toISOString()
   };
-  try {
-    var resp = await fetch('/api/telegram-queue', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ row: row })
-    });
-    var data = await resp.json().catch(function(){ return null; });
-    if (resp.ok && data && data.ok) {
-      if (typeof showToast === 'function') showToast('✅ Насрочено за ' + d.bg_time_str + ' българско време', 'success');
-      document.getElementById('tgAlertPaste').value = '';
-      document.getElementById('tgParsedPreview').innerHTML = '';
-      tgRenderQueue();
-    } else {
-      if (typeof showToast === 'function') showToast('❌ Грешка при насрочване: ' + (data && data.error ? data.error : 'HTTP ' + resp.status), 'error');
-    }
-  } catch(e) {
-    if (typeof showToast === 'function') showToast('❌ Grешка: ' + e.message, 'error');
+}
+
+async function tgScheduleRow(row) {
+  var resp = await fetch('/api/telegram-queue', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ row: row })
+  });
+  var data = await resp.json().catch(function(){ return null; });
+  return resp.ok && data && data.ok;
+}
+
+window.tgScheduleOne = async function(i) {
+  var p = TG_PENDING[i];
+  if (!p) return;
+  var ok = await tgScheduleRow(tgRowFromParsed(p));
+  if (typeof showToast === 'function') {
+    showToast(ok ? '✅ Насрочено: ' + p.home + ' vs ' + p.away : '❌ Грешка при насрочване', ok ? 'success' : 'error');
   }
+  if (ok) tgRenderQueue();
+};
+
+async function tgScheduleAllPending() {
+  if (!TG_PENDING.length) return;
+  var okCount = 0;
+  for (var i = 0; i < TG_PENDING.length; i++) {
+    try {
+      var ok = await tgScheduleRow(tgRowFromParsed(TG_PENDING[i]));
+      if (ok) okCount++;
+    } catch(e) { console.warn('[tgScheduleAllPending]', e.message); }
+  }
+  if (typeof showToast === 'function') {
+    showToast('✅ Насрочени ' + okCount + '/' + TG_PENDING.length + ' известия', okCount === TG_PENDING.length ? 'success' : 'warn');
+  }
+  document.getElementById('tgAlertPaste').value = '';
+  document.getElementById('tgParsedPreview').innerHTML = '';
+  TG_PENDING = [];
+  tgRenderQueue();
 }
 
 async function tgRenderQueue() {
