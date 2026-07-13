@@ -1923,6 +1923,10 @@ input::placeholder, textarea::placeholder {
         <div class="dash-tile-ic">📨</div><div class="dash-tile-t">Telegram</div>
         <div class="dash-tile-d">Известия при kickoff</div>
       </div>
+      <div class="dash-tile" onclick="navTo('pcCompareCard','📐 OA срещу Модел')">
+        <div class="dash-tile-ic">📐</div><div class="dash-tile-t">OA vs Модел</div>
+        <div class="dash-tile-d">Сравни точността</div>
+      </div>
     </div>
   </div>
 
@@ -3671,6 +3675,32 @@ input::placeholder, textarea::placeholder {
       </div>
       <div id="vbLogList" style="font-size:.62rem;color:var(--dim)">Зареждане...</div>
     </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     📐 OA vs МОДЕЛ — сравнение на точността. При всяко Calculate в
+     отворен мач се пазят и OA суровите вероятности, и вероятностите
+     на модела (Oracle, не localStorage). Тук маркираш реалния резултат
+     и системата показва кой е бил по-точен.
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="card" id="pcCompareCard">
+  <div class="chdr" style="cursor:pointer" onclick="togglePcCompare()">
+    📐 OA срещу Модел
+    <span id="pcCompareArrow" style="margin-left:auto;color:var(--dim)">▼</span>
+  </div>
+  <div id="pcComparePanel" style="display:none">
+    <div style="font-size:.62rem;color:var(--dim);margin-bottom:.7rem;line-height:1.5">
+      Автоматично се пазят OA и модел вероятностите при всяко "⚡ Изчисли вероятността" в отворен мач. Тук маркираш реалния резултат (Дом/Равен/Гост) и системата сравнява точността на двата.
+    </div>
+    <div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.7rem">
+      <label style="font-size:.62rem;color:var(--dim)">Последни</label>
+      <input type="number" id="pcLastN" value="8" min="1" style="width:60px;font-size:.65rem;padding:5px">
+      <label style="font-size:.62rem;color:var(--dim)">срещи с резултат</label>
+      <button class="btn btn-sec" style="margin-left:auto;font-size:.58rem;padding:3px 8px" onclick="pcLoadAndRender()">🔄 Обнови</button>
+    </div>
+    <div id="pcSummaryBox"></div>
+    <div id="pcListBox" style="font-size:.62rem;color:var(--dim);margin-top:.6rem">Зареждане...</div>
   </div>
 </div>
 
@@ -10481,6 +10511,124 @@ async function tgDeleteQueueItem(id) {
     tgRenderQueue();
   } catch(e){}
 }
+
+function togglePcCompare() {
+  var p = document.getElementById('pcComparePanel');
+  var a = document.getElementById('pcCompareArrow');
+  if (!p || !a) return;
+  var shown = p.style.display !== 'none';
+  p.style.display = shown ? 'none' : 'block';
+  a.textContent   = shown ? '▶' : '▼';
+  if (!shown) pcLoadAndRender();
+}
+
+var PC_ITEMS = [];
+
+function pcLoadAndRender() {
+  var listBox = document.getElementById('pcListBox');
+  var sumBox  = document.getElementById('pcSummaryBox');
+  if (!listBox) return;
+  listBox.innerHTML = 'Зареждане...';
+  fetch('/api/prediction-comparison').then(function(r){ return r.json(); }).then(function(data){
+    PC_ITEMS = (data && data.items) || [];
+    pcRender();
+  }).catch(function(e){
+    listBox.innerHTML = '<div style="color:var(--red)">❌ ' + e.message + '</div>';
+  });
+}
+
+function pcOutcomeProbs(it, side) {
+  // side: 'oa' | 'model' → връща {H,D,A}
+  if (side === 'oa') return { H: it.oa_prob_home, D: it.oa_prob_draw, A: it.oa_prob_away };
+  return { H: it.model_prob_home, D: it.model_prob_draw, A: it.model_prob_away };
+}
+
+function pcRender() {
+  var listBox = document.getElementById('pcListBox');
+  var sumBox  = document.getElementById('pcSummaryBox');
+  if (!listBox) return;
+
+  var withResult = PC_ITEMS.filter(function(it){ return it.actual_result; });
+  var lastN = parseInt(document.getElementById('pcLastN').value, 10) || 8;
+  var sample = withResult.slice(0, lastN); // items вече идват сортирани desc по id (най-скорошни първи)
+
+  // ── Сравнение на точността: Brier score (по-нисък = по-точен) ──
+  if (sample.length) {
+    var oaBrierSum = 0, modelBrierSum = 0, oaWins = 0, modelWins = 0, ties = 0;
+    sample.forEach(function(it){
+      var actual = it.actual_result; // 'H' | 'D' | 'A'
+      var oaP = pcOutcomeProbs(it, 'oa');
+      var modelP = pcOutcomeProbs(it, 'model');
+      function brier(p){
+        var oH = actual==='H'?1:0, oD = actual==='D'?1:0, oA = actual==='A'?1:0;
+        var h=(p.H||0)/100, d=(p.D||0)/100, a=(p.A||0)/100;
+        return Math.pow(h-oH,2) + Math.pow(d-oD,2) + Math.pow(a-oA,2);
+      }
+      var bOA = brier(oaP), bModel = brier(modelP);
+      oaBrierSum += bOA; modelBrierSum += bModel;
+      if (bOA < bModel - 0.01) oaWins++;
+      else if (bModel < bOA - 0.01) modelWins++;
+      else ties++;
+    });
+    var avgOA = oaBrierSum / sample.length, avgModel = modelBrierSum / sample.length;
+    var better = avgOA < avgModel ? 'OA' : (avgModel < avgOA ? 'Модел' : 'Равни');
+    var betterColor = better === 'OA' ? 'var(--pur)' : better === 'Модел' ? 'var(--acc)' : 'var(--dim)';
+    sumBox.innerHTML =
+      '<div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.25);border-radius:8px;padding:.6rem;margin-bottom:.6rem">' +
+        '<div style="font-size:.66rem;color:var(--acc);font-weight:600;margin-bottom:.4rem">📊 Сравнение (последни ' + sample.length + ' с резултат)</div>' +
+        '<div style="font-size:.65rem;margin-bottom:.2rem">🎯 OA среден Brier: <b>' + avgOA.toFixed(3) + '</b> (по-нисък = по-точен)</div>' +
+        '<div style="font-size:.65rem;margin-bottom:.4rem">🤖 Модел среден Brier: <b>' + avgModel.toFixed(3) + '</b></div>' +
+        '<div style="font-size:.68rem;font-weight:700;color:' + betterColor + '">🏆 По-точен: ' + better + '</div>' +
+        '<div style="font-size:.6rem;color:var(--dim);margin-top:.3rem">Победи по мач: OA ' + oaWins + ' · Модел ' + modelWins + ' · Равни ' + ties + '</div>' +
+      '</div>';
+  } else {
+    sumBox.innerHTML = '<div style="font-size:.62rem;color:var(--dim);padding:.3rem 0">Няма мачове с маркиран резултат още — маркирай ги в списъка отдолу.</div>';
+  }
+
+  // ── Пълен списък (с и без резултат) ──
+  if (!PC_ITEMS.length) { listBox.innerHTML = '<div style="text-align:center;padding:.5rem 0">Няма записани сравнения още.</div>'; return; }
+
+  listBox.innerHTML = PC_ITEMS.slice(0, 30).map(function(it){
+    var resultRow = '';
+    if (it.actual_result) {
+      var lbl = { H:'🏠 Дом', D:'🤝 Равен', A:'✈️ Гост' }[it.actual_result] || it.actual_result;
+      resultRow = '<div style="font-size:.6rem;color:var(--grn);margin-top:.25rem">✅ Резултат: ' + lbl + '</div>';
+    } else {
+      resultRow =
+        '<div style="margin-top:.3rem;display:flex;gap:.3rem">' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.56rem;padding:4px" onclick="pcMarkResult(' + it.id + ',\'H\')">🏠 Дом</button>' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.56rem;padding:4px" onclick="pcMarkResult(' + it.id + ',\'D\')">🤝 Равен</button>' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.56rem;padding:4px" onclick="pcMarkResult(' + it.id + ',\'A\')">✈️ Гост</button>' +
+        '</div>';
+    }
+    return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.5rem;margin-bottom:.35rem">' +
+      '<div style="font-size:.64rem;font-weight:700;color:var(--txt)">' + it.home + ' <span style="color:var(--dim)">vs</span> ' + it.away + '</div>' +
+      '<div style="font-size:.58rem;color:var(--dim)">' + (it.league||'') + '</div>' +
+      '<div style="font-size:.6rem;margin-top:.2rem">🎯 OA: ' + fmtP(it.oa_prob_home) + '/' + fmtP(it.oa_prob_draw) + '/' + fmtP(it.oa_prob_away) +
+        ' · 🤖 Модел: ' + fmtP(it.model_prob_home) + '/' + fmtP(it.model_prob_draw) + '/' + fmtP(it.model_prob_away) + '</div>' +
+      resultRow +
+    '</div>';
+  }).join('');
+}
+
+function fmtP(v) { return v != null ? Math.round(v) + '%' : '—'; }
+
+window.pcMarkResult = function(id, result) {
+  fetch('/api/prediction-comparison', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id, actual_result: result })
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if (data && data.ok) {
+      if (typeof showToast === 'function') showToast('✅ Резултат маркиран', 'success');
+      pcLoadAndRender();
+    } else {
+      if (typeof showToast === 'function') showToast('❌ Грешка при запис', 'error');
+    }
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+  });
+};
 
 function toggleVbTracker() {
   var p = document.getElementById('vbTrackerPanel');
@@ -27075,6 +27223,28 @@ function mwCalc() {
     if (typeof calcValueBets === 'function') {
       try { m.valueBets = calcValueBets(m.modelProbs, oddsNow); } catch(e){}
     }
+
+    // ✅ OA vs Модел сравнение — записваме и двата комплекта вероятности
+    // в отделна Oracle таблица, за да можем после да анализираме кой е
+    // по-точен спрямо реалните резултати.
+    var oaHomeRaw = document.getElementById('oa_home') && document.getElementById('oa_home').value;
+    var oaDrawRaw = document.getElementById('oa_draw') && document.getElementById('oa_draw').value;
+    var oaAwayRaw = document.getElementById('oa_away') && document.getElementById('oa_away').value;
+    if ((oaHomeRaw || oaDrawRaw || oaAwayRaw) && typeof fetch === 'function') {
+      var pcRow = {
+        home: m.home, away: m.away, league: m.league || '', country: country || '',
+        kickoff_utc: (m.match_date ? m.match_date + 'T00:00:00.000Z' : null),
+        oa_prob_home: oaHomeRaw !== '' ? parseFloat(oaHomeRaw) : null,
+        oa_prob_draw: oaDrawRaw !== '' ? parseFloat(oaDrawRaw) : null,
+        oa_prob_away: oaAwayRaw !== '' ? parseFloat(oaAwayRaw) : null,
+        model_prob_home: +(CC.pH*100).toFixed(2), model_prob_draw: +(CC.pD*100).toFixed(2), model_prob_away: +(CC.pA*100).toFixed(2)
+      };
+      fetch('/api/prediction-comparison', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ row: pcRow })
+      }).catch(function(e){ console.warn('[predComparison] save failed:', e.message); });
+    }
+
     // Публикуваме веднага (не debounced) — за да се появи в BetPro без забавяне
     if (typeof persistFxPasted === 'function') persistFxPasted();
     if (typeof cloudFxPublishToPublic === 'function') {
