@@ -10490,7 +10490,8 @@ async function tgScheduleRow(row) {
     body: JSON.stringify({ row: row })
   });
   var data = await resp.json().catch(function(){ return null; });
-  return resp.ok && data && data.ok;
+  if (data && data.skipped) return 'skipped';
+  return (resp.ok && data && data.ok) ? 'ok' : 'error';
 }
 
 window.tgScheduleOne = async function(i) {
@@ -10501,11 +10502,13 @@ window.tgScheduleOne = async function(i) {
     if (typeof showToast === 'function') showToast('⚠ Избери пазар преди да насрочиш', 'warn');
     return;
   }
-  var ok = await tgScheduleRow(tgRowFromParsed(p, market));
+  var status = await tgScheduleRow(tgRowFromParsed(p, market));
   if (typeof showToast === 'function') {
-    showToast(ok ? '✅ Насрочено: ' + p.home + ' vs ' + p.away + ' (' + market + ')' : '❌ Грешка при насрочване', ok ? 'success' : 'error');
+    if (status === 'ok') showToast('✅ Насрочено: ' + p.home + ' vs ' + p.away + ' (' + market + ')', 'success');
+    else if (status === 'skipped') showToast('⏭ Пропуснато — вече насрочено/изпратено за ' + p.home + ' vs ' + p.away + ' (' + market + ')', 'warn');
+    else showToast('❌ Грешка при насрочване', 'error');
   }
-  if (ok) tgRenderQueue();
+  if (status === 'ok') tgRenderQueue();
 };
 
 async function tgScheduleAllPending() {
@@ -10516,15 +10519,21 @@ async function tgScheduleAllPending() {
     if (typeof showToast === 'function') showToast('⚠ Избери пазар за всички (липсва за № ' + missing.join(', ') + ')', 'warn');
     return;
   }
-  var okCount = 0;
+  var okCount = 0, skippedCount = 0, errCount = 0;
   for (var i = 0; i < TG_PENDING.length; i++) {
     try {
-      var ok = await tgScheduleRow(tgRowFromParsed(TG_PENDING[i], tgReadMarketSel(i)));
-      if (ok) okCount++;
-    } catch(e) { console.warn('[tgScheduleAllPending]', e.message); }
+      var status = await tgScheduleRow(tgRowFromParsed(TG_PENDING[i], tgReadMarketSel(i)));
+      if (status === 'ok') okCount++;
+      else if (status === 'skipped') skippedCount++;
+      else errCount++;
+    } catch(e) { errCount++; console.warn('[tgScheduleAllPending]', e.message); }
   }
   if (typeof showToast === 'function') {
-    showToast('✅ Насрочени ' + okCount + '/' + TG_PENDING.length + ' известия', okCount === TG_PENDING.length ? 'success' : 'warn');
+    var parts = [];
+    if (okCount) parts.push('✅ ' + okCount + ' насрочени');
+    if (skippedCount) parts.push('⏭ ' + skippedCount + ' пропуснати (дубликат)');
+    if (errCount) parts.push('❌ ' + errCount + ' грешки');
+    showToast(parts.join(' · '), errCount ? 'warn' : 'success');
   }
   document.getElementById('tgAlertPaste').value = '';
   document.getElementById('tgParsedPreview').innerHTML = '';

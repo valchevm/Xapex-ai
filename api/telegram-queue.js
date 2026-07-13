@@ -19,6 +19,11 @@ async function oraFetch(path, method, body) {
   return { ok: res.ok, status: res.status, text, json };
 }
 
+function normKey(row) {
+  return (row.home || "").trim().toLowerCase() + "|" + (row.away || "").trim().toLowerCase() +
+    "|" + (row.kickoff_utc || "").slice(0, 16) + "|" + (row.side || "").trim().toLowerCase();
+}
+
 export default async function handler(req, res) {
   try {
     if (req.method === "GET") {
@@ -31,6 +36,19 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       const row = req.body?.row;
       if (!row) { res.status(400).json({ ok: false, error: "missing_row" }); return; }
+
+      // ── Проверка за дубликат: същия мач + пазар, независимо дали вече
+      // е изпратен или все още чака — не искаме второ известие за него. ──
+      const q = encodeURIComponent(JSON.stringify({ home: row.home, away: row.away }));
+      const existing = await oraFetch(`/${TABLE}/?q=${q}&limit=50`, "GET");
+      const items = existing.json?.items || [];
+      const key = normKey(row);
+      const dup = items.find((it) => normKey(it) === key);
+      if (dup) {
+        res.status(200).json({ ok: false, skipped: true, reason: "duplicate", existing: dup });
+        return;
+      }
+
       const r = await oraFetch(`/${TABLE}/`, "POST", row);
       if (r.ok) res.status(200).json({ ok: true, item: r.json });
       else res.status(r.status).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` });
