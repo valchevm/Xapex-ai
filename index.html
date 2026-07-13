@@ -1927,6 +1927,10 @@ input::placeholder, textarea::placeholder {
         <div class="dash-tile-ic">📐</div><div class="dash-tile-t">OA vs Модел</div>
         <div class="dash-tile-d">Сравни точността</div>
       </div>
+      <div class="dash-tile" onclick="navTo('vbTrackerCard','📒 Value Bet Тракер')">
+        <div class="dash-tile-ic">📒</div><div class="dash-tile-t">Value Тракер</div>
+        <div class="dash-tile-d">Движение на коефициенти</div>
+      </div>
     </div>
   </div>
 
@@ -10543,43 +10547,72 @@ function pcOutcomeProbs(it, side) {
   return { H: it.model_prob_home, D: it.model_prob_draw, A: it.model_prob_away };
 }
 
+// ── Brier за отделен бинарен/тернарен пазар ──
+function pcBrier1X2(p, actual) {
+  var oH=actual==='H'?1:0, oD=actual==='D'?1:0, oA=actual==='A'?1:0;
+  var h=(p.H||0)/100, d=(p.D||0)/100, a=(p.A||0)/100;
+  return Math.pow(h-oH,2)+Math.pow(d-oD,2)+Math.pow(a-oA,2);
+}
+function pcBrierBinary(pYes, actualYes) {
+  var o = actualYes ? 1 : 0;
+  var p = (pYes||0)/100;
+  return Math.pow(p-o, 2);
+}
+
 function pcRender() {
   var listBox = document.getElementById('pcListBox');
   var sumBox  = document.getElementById('pcSummaryBox');
   if (!listBox) return;
 
-  var withResult = PC_ITEMS.filter(function(it){ return it.actual_result; });
   var lastN = parseInt(document.getElementById('pcLastN').value, 10) || 8;
-  var sample = withResult.slice(0, lastN); // items вече идват сортирани desc по id (най-скорошни първи)
 
-  // ── Сравнение на точността: Brier score (по-нисък = по-точен) ──
-  if (sample.length) {
-    var oaBrierSum = 0, modelBrierSum = 0, oaWins = 0, modelWins = 0, ties = 0;
-    sample.forEach(function(it){
-      var actual = it.actual_result; // 'H' | 'D' | 'A'
-      var oaP = pcOutcomeProbs(it, 'oa');
-      var modelP = pcOutcomeProbs(it, 'model');
-      function brier(p){
-        var oH = actual==='H'?1:0, oD = actual==='D'?1:0, oA = actual==='A'?1:0;
-        var h=(p.H||0)/100, d=(p.D||0)/100, a=(p.A||0)/100;
-        return Math.pow(h-oH,2) + Math.pow(d-oD,2) + Math.pow(a-oA,2);
-      }
-      var bOA = brier(oaP), bModel = brier(modelP);
-      oaBrierSum += bOA; modelBrierSum += bModel;
-      if (bOA < bModel - 0.01) oaWins++;
-      else if (bModel < bOA - 0.01) modelWins++;
-      else ties++;
-    });
-    var avgOA = oaBrierSum / sample.length, avgModel = modelBrierSum / sample.length;
-    var better = avgOA < avgModel ? 'OA' : (avgModel < avgOA ? 'Модел' : 'Равни');
+  // ── Аз събирам всички Brier точки (от кой да е пазар с маркиран резултат),
+  // разделени по пазар, за детайлно сравнение + общ агрегат. ──
+  var buckets = { '1X2': {oa:[], model:[]}, 'BTTS': {oa:[], model:[]}, 'O/U 2.5': {oa:[], model:[]} };
+  var withAnyResult = PC_ITEMS.filter(function(it){ return it.actual_result || it.actual_btts || it.actual_ou25; });
+  var sample = withAnyResult.slice(0, lastN);
+
+  sample.forEach(function(it){
+    if (it.actual_result) {
+      buckets['1X2'].oa.push(pcBrier1X2(pcOutcomeProbs(it,'oa'), it.actual_result));
+      buckets['1X2'].model.push(pcBrier1X2(pcOutcomeProbs(it,'model'), it.actual_result));
+    }
+    if (it.actual_btts) {
+      var yesB = it.actual_btts === 'Y';
+      buckets['BTTS'].oa.push(pcBrierBinary(it.oa_prob_btts, yesB));
+      buckets['BTTS'].model.push(pcBrierBinary(it.model_prob_btts, yesB));
+    }
+    if (it.actual_ou25) {
+      var overB = it.actual_ou25 === 'O';
+      buckets['O/U 2.5'].oa.push(pcBrierBinary(it.oa_prob_over, overB));
+      buckets['O/U 2.5'].model.push(pcBrierBinary(it.model_prob_over, overB));
+    }
+  });
+
+  function avg(arr){ return arr.length ? arr.reduce(function(a,b){return a+b;},0)/arr.length : null; }
+
+  var rows = Object.keys(buckets).map(function(k){
+    var avgOA = avg(buckets[k].oa), avgModel = avg(buckets[k].model);
+    return { market: k, n: buckets[k].oa.length, avgOA: avgOA, avgModel: avgModel };
+  }).filter(function(r){ return r.n > 0; });
+
+  if (rows.length) {
+    var totalOA = [], totalModel = [];
+    Object.keys(buckets).forEach(function(k){ totalOA = totalOA.concat(buckets[k].oa); totalModel = totalModel.concat(buckets[k].model); });
+    var aggOA = avg(totalOA), aggModel = avg(totalModel);
+    var better = aggOA < aggModel ? 'OA' : (aggModel < aggOA ? 'Модел' : 'Равни');
     var betterColor = better === 'OA' ? 'var(--pur)' : better === 'Модел' ? 'var(--acc)' : 'var(--dim)';
+
     sumBox.innerHTML =
       '<div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.25);border-radius:8px;padding:.6rem;margin-bottom:.6rem">' +
-        '<div style="font-size:.66rem;color:var(--acc);font-weight:600;margin-bottom:.4rem">📊 Сравнение (последни ' + sample.length + ' с резултат)</div>' +
-        '<div style="font-size:.65rem;margin-bottom:.2rem">🎯 OA среден Brier: <b>' + avgOA.toFixed(3) + '</b> (по-нисък = по-точен)</div>' +
-        '<div style="font-size:.65rem;margin-bottom:.4rem">🤖 Модел среден Brier: <b>' + avgModel.toFixed(3) + '</b></div>' +
-        '<div style="font-size:.68rem;font-weight:700;color:' + betterColor + '">🏆 По-точен: ' + better + '</div>' +
-        '<div style="font-size:.6rem;color:var(--dim);margin-top:.3rem">Победи по мач: OA ' + oaWins + ' · Модел ' + modelWins + ' · Равни ' + ties + '</div>' +
+        '<div style="font-size:.66rem;color:var(--acc);font-weight:600;margin-bottom:.4rem">📊 Сравнение (последни ' + sample.length + ' с маркиран резултат)</div>' +
+        rows.map(function(r){
+          var rBetter = r.avgOA < r.avgModel ? 'OA' : (r.avgModel < r.avgOA ? 'Модел' : '=');
+          return '<div style="font-size:.62rem;margin-bottom:.25rem">' + r.market + ' (n=' + r.n + '): OA <b>' + r.avgOA.toFixed(3) + '</b> · Модел <b>' + r.avgModel.toFixed(3) + '</b> ' +
+            (rBetter !== '=' ? '→ <span style="color:' + (rBetter==='OA'?'var(--pur)':'var(--acc)') + '">' + rBetter + '</span>' : '(равни)') +
+          '</div>';
+        }).join('') +
+        '<div style="font-size:.68rem;font-weight:700;color:' + betterColor + ';margin-top:.4rem;padding-top:.4rem;border-top:1px solid rgba(255,255,255,.08)">🏆 Общо по-точен: ' + better + ' (общ Brier OA ' + aggOA.toFixed(3) + ' · Модел ' + aggModel.toFixed(3) + ')</div>' +
       '</div>';
   } else {
     sumBox.innerHTML = '<div style="font-size:.62rem;color:var(--dim);padding:.3rem 0">Няма мачове с маркиран резултат още — маркирай ги в списъка отдолу.</div>';
@@ -10589,35 +10622,50 @@ function pcRender() {
   if (!PC_ITEMS.length) { listBox.innerHTML = '<div style="text-align:center;padding:.5rem 0">Няма записани сравнения още.</div>'; return; }
 
   listBox.innerHTML = PC_ITEMS.slice(0, 30).map(function(it){
-    var resultRow = '';
-    if (it.actual_result) {
-      var lbl = { H:'🏠 Дом', D:'🤝 Равен', A:'✈️ Гост' }[it.actual_result] || it.actual_result;
-      resultRow = '<div style="font-size:.6rem;color:var(--grn);margin-top:.25rem">✅ Резултат: ' + lbl + '</div>';
-    } else {
-      resultRow =
-        '<div style="margin-top:.3rem;display:flex;gap:.3rem">' +
-          '<button class="btn btn-sec" style="flex:1;font-size:.56rem;padding:4px" onclick="pcMarkResult(' + it.id + ',\'H\')">🏠 Дом</button>' +
-          '<button class="btn btn-sec" style="flex:1;font-size:.56rem;padding:4px" onclick="pcMarkResult(' + it.id + ',\'D\')">🤝 Равен</button>' +
-          '<button class="btn btn-sec" style="flex:1;font-size:.56rem;padding:4px" onclick="pcMarkResult(' + it.id + ',\'A\')">✈️ Гост</button>' +
-        '</div>';
-    }
+    // ── 1X2 ред ──
+    var row1x2 = it.actual_result
+      ? '<div style="font-size:.58rem;color:var(--grn)">✅ 1X2: ' + ({H:'🏠 Дом',D:'🤝 Равен',A:'✈️ Гост'}[it.actual_result]||it.actual_result) + '</div>'
+      : '<div style="margin-top:.25rem"><div style="font-size:.56rem;color:var(--dim);margin-bottom:.15rem">1X2:</div><div style="display:flex;gap:.25rem">' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.54rem;padding:3px" onclick="pcMarkResult(' + it.id + ',\'actual_result\',\'H\')">🏠</button>' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.54rem;padding:3px" onclick="pcMarkResult(' + it.id + ',\'actual_result\',\'D\')">🤝</button>' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.54rem;padding:3px" onclick="pcMarkResult(' + it.id + ',\'actual_result\',\'A\')">✈️</button>' +
+        '</div></div>';
+    // ── BTTS ред ──
+    var rowBtts = it.actual_btts
+      ? '<div style="font-size:.58rem;color:var(--grn)">✅ Гол-Гол: ' + (it.actual_btts==='Y'?'Да':'Не') + '</div>'
+      : '<div style="margin-top:.25rem"><div style="font-size:.56rem;color:var(--dim);margin-bottom:.15rem">Гол-Гол:</div><div style="display:flex;gap:.25rem">' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.54rem;padding:3px" onclick="pcMarkResult(' + it.id + ',\'actual_btts\',\'Y\')">Да</button>' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.54rem;padding:3px" onclick="pcMarkResult(' + it.id + ',\'actual_btts\',\'N\')">Не</button>' +
+        '</div></div>';
+    // ── O/U 2.5 ред ──
+    var rowOU = it.actual_ou25
+      ? '<div style="font-size:.58rem;color:var(--grn)">✅ O/U 2.5: ' + (it.actual_ou25==='O'?'Над':'Под') + '</div>'
+      : '<div style="margin-top:.25rem"><div style="font-size:.56rem;color:var(--dim);margin-bottom:.15rem">O/U 2.5:</div><div style="display:flex;gap:.25rem">' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.54rem;padding:3px" onclick="pcMarkResult(' + it.id + ',\'actual_ou25\',\'O\')">Над</button>' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.54rem;padding:3px" onclick="pcMarkResult(' + it.id + ',\'actual_ou25\',\'U\')">Под</button>' +
+        '</div></div>';
+
     return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.5rem;margin-bottom:.35rem">' +
       '<div style="font-size:.64rem;font-weight:700;color:var(--txt)">' + it.home + ' <span style="color:var(--dim)">vs</span> ' + it.away + '</div>' +
       '<div style="font-size:.58rem;color:var(--dim)">' + (it.league||'') + '</div>' +
-      '<div style="font-size:.6rem;margin-top:.2rem">🎯 OA: ' + fmtP(it.oa_prob_home) + '/' + fmtP(it.oa_prob_draw) + '/' + fmtP(it.oa_prob_away) +
-        ' · 🤖 Модел: ' + fmtP(it.model_prob_home) + '/' + fmtP(it.model_prob_draw) + '/' + fmtP(it.model_prob_away) + '</div>' +
-      resultRow +
+      '<div style="font-size:.6rem;margin-top:.2rem">1X2 — 🎯OA: ' + fmtP(it.oa_prob_home) + '/' + fmtP(it.oa_prob_draw) + '/' + fmtP(it.oa_prob_away) +
+        ' · 🤖Модел: ' + fmtP(it.model_prob_home) + '/' + fmtP(it.model_prob_draw) + '/' + fmtP(it.model_prob_away) + '</div>' +
+      '<div style="font-size:.6rem">BTTS — 🎯OA: ' + fmtP(it.oa_prob_btts) + ' · 🤖Модел: ' + fmtP(it.model_prob_btts) +
+        ' &nbsp; O2.5 — 🎯OA: ' + fmtP(it.oa_prob_over) + ' · 🤖Модел: ' + fmtP(it.model_prob_over) + '</div>' +
+      row1x2 + rowBtts + rowOU +
     '</div>';
   }).join('');
 }
 
 function fmtP(v) { return v != null ? Math.round(v) + '%' : '—'; }
 
-window.pcMarkResult = function(id, result) {
+window.pcMarkResult = function(id, field, value) {
+  var body = { id: id };
+  body[field] = value;
   fetch('/api/prediction-comparison', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: id, actual_result: result })
+    body: JSON.stringify(body)
   }).then(function(r){ return r.json(); }).then(function(data){
     if (data && data.ok) {
       if (typeof showToast === 'function') showToast('✅ Резултат маркиран', 'success');
@@ -26553,6 +26601,7 @@ function dismissIOSHint() {
   // Картите които участват в навигацията
   var NAV_CARDS = ['statsPasteCard','statsCard','oddsCard','resCard','addLogCard',
     'backtestCard','xgTestCard','sharpDropCard','arbCalcCard','filterCheckCard','tgAlertCard',
+    'vbTrackerCard','pcCompareCard',
     'kellyCalcCard','logSection','fxBrowserCard','settingsCard'];
 
   // Маркираме ги с nav-card клас (за CSS скриване)
@@ -27225,19 +27274,26 @@ function mwCalc() {
     }
 
     // ✅ OA vs Модел сравнение — записваме и двата комплекта вероятности
-    // в отделна Oracle таблица, за да можем после да анализираме кой е
-    // по-точен спрямо реалните резултати.
+    // (1X2 + BTTS + O/U 2.5) в отделна Oracle таблица, за да можем
+    // после да анализираме кой е по-точен спрямо реалните резултати.
     var oaHomeRaw = document.getElementById('oa_home') && document.getElementById('oa_home').value;
     var oaDrawRaw = document.getElementById('oa_draw') && document.getElementById('oa_draw').value;
     var oaAwayRaw = document.getElementById('oa_away') && document.getElementById('oa_away').value;
-    if ((oaHomeRaw || oaDrawRaw || oaAwayRaw) && typeof fetch === 'function') {
+    var oaBttsRaw = document.getElementById('oa_btts') && document.getElementById('oa_btts').value;
+    var oaO25Raw  = document.getElementById('oa_o25')  && document.getElementById('oa_o25').value;
+    var oaU25Raw  = document.getElementById('oa_u25')  && document.getElementById('oa_u25').value;
+    if ((oaHomeRaw || oaDrawRaw || oaAwayRaw || oaBttsRaw || oaO25Raw || oaU25Raw) && typeof fetch === 'function') {
       var pcRow = {
         home: m.home, away: m.away, league: m.league || '', country: country || '',
         kickoff_utc: (m.match_date ? m.match_date + 'T00:00:00.000Z' : null),
         oa_prob_home: oaHomeRaw !== '' ? parseFloat(oaHomeRaw) : null,
         oa_prob_draw: oaDrawRaw !== '' ? parseFloat(oaDrawRaw) : null,
         oa_prob_away: oaAwayRaw !== '' ? parseFloat(oaAwayRaw) : null,
-        model_prob_home: +(CC.pH*100).toFixed(2), model_prob_draw: +(CC.pD*100).toFixed(2), model_prob_away: +(CC.pA*100).toFixed(2)
+        oa_prob_btts: oaBttsRaw !== '' ? parseFloat(oaBttsRaw) : null,
+        oa_prob_over: oaO25Raw !== '' ? parseFloat(oaO25Raw) : null,
+        oa_prob_under: oaU25Raw !== '' ? parseFloat(oaU25Raw) : null,
+        model_prob_home: +(CC.pH*100).toFixed(2), model_prob_draw: +(CC.pD*100).toFixed(2), model_prob_away: +(CC.pA*100).toFixed(2),
+        model_prob_btts: +(CC.pB*100).toFixed(2), model_prob_over: +(CC.pO*100).toFixed(2), model_prob_under: +(CC.pU*100).toFixed(2)
       };
       fetch('/api/prediction-comparison', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },

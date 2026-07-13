@@ -46,7 +46,9 @@ export default async function handler(req, res) {
       if (items.length > 0) {
         const upd = {
           oa_prob_home: row.oa_prob_home, oa_prob_draw: row.oa_prob_draw, oa_prob_away: row.oa_prob_away,
+          oa_prob_btts: row.oa_prob_btts, oa_prob_over: row.oa_prob_over, oa_prob_under: row.oa_prob_under,
           model_prob_home: row.model_prob_home, model_prob_draw: row.model_prob_draw, model_prob_away: row.model_prob_away,
+          model_prob_btts: row.model_prob_btts, model_prob_over: row.model_prob_over, model_prob_under: row.model_prob_under,
           league: row.league, country: row.country,
           updated_at: new Date().toISOString(),
         };
@@ -59,8 +61,10 @@ export default async function handler(req, res) {
         home: row.home, away: row.away, league: row.league || "", country: row.country || "",
         kickoff_utc: row.kickoff_utc || null,
         oa_prob_home: row.oa_prob_home, oa_prob_draw: row.oa_prob_draw, oa_prob_away: row.oa_prob_away,
+        oa_prob_btts: row.oa_prob_btts, oa_prob_over: row.oa_prob_over, oa_prob_under: row.oa_prob_under,
         model_prob_home: row.model_prob_home, model_prob_draw: row.model_prob_draw, model_prob_away: row.model_prob_away,
-        actual_result: null,
+        model_prob_btts: row.model_prob_btts, model_prob_over: row.model_prob_over, model_prob_under: row.model_prob_under,
+        actual_result: null, actual_btts: null, actual_ou25: null,
         created_at: new Date().toISOString(),
       };
       const r = await oraFetch(`/${TABLE}/`, "POST", payload);
@@ -70,10 +74,16 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "PATCH") {
-      // ── Попълва реалния резултат (H/D/A) за конкретен запис ──
-      const { id, actual_result } = req.body || {};
-      if (!id || !actual_result) { res.status(400).json({ ok: false, error: "missing_id_or_result" }); return; }
-      const r = await oraFetch(`/${TABLE}/${id}`, "PATCH", { actual_result });
+      // ── Попълва реалния резултат — 1X2 (H/D/A), BTTS (Y/N) и/или O/U 2.5 (O/U) ──
+      const { id, actual_result, actual_btts, actual_ou25 } = req.body || {};
+      if (!id || (!actual_result && !actual_btts && !actual_ou25)) {
+        res.status(400).json({ ok: false, error: "missing_id_or_result" }); return;
+      }
+      const upd = {};
+      if (actual_result) upd.actual_result = actual_result;
+      if (actual_btts) upd.actual_btts = actual_btts;
+      if (actual_ou25) upd.actual_ou25 = actual_ou25;
+      const r = await oraFetch(`/${TABLE}/${id}`, "PATCH", upd);
       if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
       res.status(200).json({ ok: true });
       return;
