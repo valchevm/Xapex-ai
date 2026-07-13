@@ -10393,66 +10393,34 @@ function tgParseAlert() {
   var box = document.getElementById('tgParsedPreview');
   if (!text.trim() || !box) return;
 
-  var sideM   = text.match(/⚙️\s*(Home|Away|Draw)\s+(Opening|Closing)/i);
-  var teamsM  = text.match(/🆚\s*(.+?)\s+vs\.?\s+(.+)/i);
-  var leagueM = text.match(/🏆\s*(.+)/);
-  var dateM   = text.match(/📆\s*(\w+)\s+(\d+)\w*\s+at\s+(\d{1,2}):(\d{2})\s*\(GMT\)/i);
-  var probM   = text.match(/Probability:\s*([\d.]+)%\s*\(([\d.]+)\)/i);
-  var peakM   = text.match(/Peak Probability:\s*([\d.]+)%/i);
-  var oddsM   = text.match(/📉?\s*Odds:\s*([\d.]+)/i);
-  var valueM  = text.match(/Value:\s*([\d.]+)%/i);
-
-  if (!teamsM || !dateM) {
-    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Не успях да разпозная формата — провери дали текстът е копиран изцяло от OddAlerts.</div>';
+  var p = parseAlertBlock(text);
+  if (!p) {
+    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Не успях да разпозная формата — провери дали текстът е копиран изцяло (поддържат се OddAlerts и OddsTrack формати).</div>';
     return;
   }
-
-  var side    = sideM ? sideM[1] : '?';
-  var timing  = sideM ? sideM[2] : '?';
-  var home    = teamsM[1].trim();
-  var away    = teamsM[2].trim();
-  var league  = leagueM ? leagueM[1].trim() : '';
-  var weekday = dateM[1], day = parseInt(dateM[2],10), hourGmt = parseInt(dateM[3],10), minGmt = parseInt(dateM[4],10);
-  var prob    = probM ? parseFloat(probM[1]) : null;
-  var fairOdds= probM ? parseFloat(probM[2]) : null;
-  var peakProb= peakM ? parseFloat(peakM[1]) : null;
-  var odds    = oddsM ? parseFloat(oddsM[1]) : null;
-  var value   = valueM ? parseFloat(valueM[1]) : null;
-
-  var anchorUtc = resolveNextDate(weekday, day, hourGmt, minGmt);
-  if (!anchorUtc) {
-    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Не успях да изчисля точната дата от "' + weekday + ' ' + day + '".</div>';
-    return;
-  }
-  // ✅ anchorUtc третира подадения час като суров анкер (не непременно
-  // истински UTC) — OddAlerts "(GMT)" реално е UK местно време.
-  var ukOffset = ukOffsetForDate(anchorUtc);
-  var kickoffUtc = new Date(anchorUtc.getTime() - ukOffset * 3600 * 1000); // истински UTC
-  var bgOffset = bgOffsetForDate(kickoffUtc);
-  var bgTime = new Date(kickoffUtc.getTime() + bgOffset*3600*1000);
-  var bgStr = String(bgTime.getUTCHours()).padStart(2,'0') + ':' + String(bgTime.getUTCMinutes()).padStart(2,'0');
-  var bgDateStr = bgTime.getUTCDate() + '.' + (bgTime.getUTCMonth()+1) + '.' + bgTime.getUTCFullYear();
 
   window._tgLastParsed = {
-    side: side, timing: timing, home: home, away: away, league: league,
-    prob: prob, fairOdds: fairOdds, peak_prob: peakProb, odds: odds, value: value,
-    kickoff_utc: kickoffUtc.toISOString(), bg_time_str: bgStr, bg_date_str: bgDateStr,
-    bg_offset: bgOffset
+    side: p.side, timing: p.timing, home: p.home, away: p.away, league: p.league,
+    prob: p.prob, fairOdds: p.implied_odds, peak_prob: p.peak_prob, odds: p.alert_odds, value: p.value_pct,
+    kickoff_utc: p.kickoff_utc, bg_time_str: p.bg_time_str, bg_date_str: p.bg_date_str,
+    prob_hist_min: p.prob_hist_min, prob_hist_max: p.prob_hist_max, predictability: p.predictability
   };
 
   box.innerHTML =
     '<div style="background:#0a1429;border:1px solid rgba(56,189,248,.3);border-radius:9px;padding:.7rem">' +
-      '<div style="font-size:.8rem;font-weight:700;color:var(--txt);margin-bottom:.4rem">' + home + ' vs ' + away + '</div>' +
-      '<div style="font-size:.62rem;color:var(--dim);margin-bottom:.5rem">' + league + '</div>' +
+      '<div style="font-size:.8rem;font-weight:700;color:var(--txt);margin-bottom:.4rem">' + p.home + ' vs ' + p.away + '</div>' +
+      '<div style="font-size:.62rem;color:var(--dim);margin-bottom:.5rem">' + p.league + '</div>' +
       '<div class="mw-result-row" style="margin-bottom:.5rem">' +
-        '<span class="mw-chip">' + side + ' · ' + timing + '</span>' +
-        (prob != null ? '<span class="mw-chip">Prob: ' + prob + '%</span>' : '') +
-        (peakProb != null ? '<span class="mw-chip" style="color:var(--pur)">🏔️ Peak: ' + peakProb + '%</span>' : '') +
-        (odds != null ? '<span class="mw-chip">Odds: ' + odds + '</span>' : '') +
-        (value != null ? '<span class="mw-chip" style="color:var(--grn)">Value: +' + value + '%</span>' : '') +
+        '<span class="mw-chip">' + p.side + ' · ' + p.timing + '</span>' +
+        (p.prob != null ? '<span class="mw-chip">Prob: ' + p.prob + '%</span>' : '') +
+        (p.peak_prob != null ? '<span class="mw-chip" style="color:var(--pur)">🏔️ Peak: ' + p.peak_prob + '%</span>' : '') +
+        (p.alert_odds != null ? '<span class="mw-chip">Odds: ' + p.alert_odds + '</span>' : '') +
+        (p.value_pct != null ? '<span class="mw-chip" style="color:var(--grn)">Value: +' + p.value_pct + '%</span>' : '') +
+        (p.predictability ? '<span class="mw-chip">Pred: ' + p.predictability + '</span>' : '') +
+        (p.prob_hist_min != null ? '<span class="mw-chip">Hist: ' + p.prob_hist_min + '-' + p.prob_hist_max + '%</span>' : '') +
       '</div>' +
-      '<div style="font-size:.7rem;color:var(--acc);font-weight:600">🇧🇬 Начало: ' + bgDateStr + ' в ' + bgStr + ' (българско време, GMT+' + bgOffset + ')</div>' +
-      '<div style="font-size:.58rem;color:var(--dim);margin-top:.2rem">GMT оригинал: ' + weekday + ' ' + day + ' в ' + String(hourGmt).padStart(2,'0') + ':' + String(minGmt).padStart(2,'0') + '</div>' +
+      '<div style="font-size:.7rem;color:var(--acc);font-weight:600">🇧🇬 Начало: ' + p.bg_date_str + ' в ' + p.bg_time_str + ' (българско време)</div>' +
+      (p.side === '?' ? '<div style="font-size:.58rem;color:var(--yellow);margin-top:.3rem">⚠ Този формат не съдържа явен Home/Away маркер — провери ръчно преди да насрочиш.</div>' : '') +
       '<button class="btn btn-p btn-action" onclick="tgScheduleAlert()" style="width:100%;margin-top:.6rem">📅 Насрочи в Telegram</button>' +
     '</div>';
 }
@@ -10525,19 +10493,97 @@ function toggleVbTracker() {
 }
 
 // ── Парсва ЕДНО известие (текстов къс) → структуриран обект ──
-function vbParseOneAlert(chunk) {
-  var sideM   = chunk.match(/⚙️\s*(Home|Away|Draw)\s+(Opening|Closing)/i);
-  var teamsM  = chunk.match(/🆚\s*(.+?)\s+vs\.?\s+(.+)/i);
-  var leagueM = chunk.match(/🏆\s*(.+)/);
-  var dateM   = chunk.match(/📆\s*(\w+)\s+(\d+)\w*\s+at\s+(\d{1,2}):(\d{2})\s*\(GMT\)/i);
-  var probM   = chunk.match(/Probability:\s*([\d.]+)%\s*\(([\d.]+)\)/i);
-  var peakM   = chunk.match(/Peak Probability:\s*([\d.]+)%/i);
-  var oddsM   = chunk.match(/📉?\s*Odds:\s*([\d.]+)/i);
-  var valueM  = chunk.match(/Value:\s*([\d.]+)%/i);
-  if (!teamsM || !dateM) return null;
+// ── Споделен парсър, разпознава ДВА формата известия ──
+// Формат 1 (OddAlerts, emoji): 🚨/⚙️/🆚/🏆/📆/✨/📉/📈
+// Формат 2 (OddsTrack, plain text, label-then-value-on-next-ред):
+//   Thu 16th 21:00
+//    Europe Europa Conference League
+//   Skendija 79 v Europa FC
+//   OddsTrack
+//   Live Prob.
+//   22.65%
+//   Implied
+//   4.42
+//   Odds
+//   10.00
+//   Value
+//   126.24%
+//    Prob. History: 18.98-22.68
+//    Predictability: medium
+function parseAlertBlock(chunk) {
+  // ── Опит №1: OddAlerts emoji формат ──
+  var sideM = chunk.match(/⚙️\s*(Home|Away|Draw)\s+(Opening|Closing)/i);
+  if (sideM || /🆚/.test(chunk)) {
+    var teamsM  = chunk.match(/🆚\s*(.+?)\s+vs\.?\s+(.+)/i);
+    var leagueM = chunk.match(/🏆\s*(.+)/);
+    var dateM   = chunk.match(/📆\s*(\w+)\s+(\d+)\w*\s+at\s+(\d{1,2}):(\d{2})\s*\(GMT\)/i);
+    var probM   = chunk.match(/Probability:\s*([\d.]+)%\s*\(([\d.]+)\)/i);
+    var peakM   = chunk.match(/Peak Probability:\s*([\d.]+)%/i);
+    var oddsM   = chunk.match(/📉?\s*Odds:\s*([\d.]+)/i);
+    var valueM  = chunk.match(/Value:\s*([\d.]+)%/i);
+    if (!teamsM || !dateM) return null;
 
-  var weekday = dateM[1], day = parseInt(dateM[2],10), hourGmt = parseInt(dateM[3],10), minGmt = parseInt(dateM[4],10);
-  var anchorUtc = resolveNextDate(weekday, day, hourGmt, minGmt);
+    var weekday = dateM[1], day = parseInt(dateM[2],10), hourGmt = parseInt(dateM[3],10), minGmt = parseInt(dateM[4],10);
+    return buildParsedAlert({
+      side: sideM ? sideM[1] : '?', timing: sideM ? sideM[2] : '?',
+      home: teamsM[1].trim(), away: teamsM[2].trim(),
+      league: leagueM ? leagueM[1].trim() : '',
+      weekday: weekday, day: day, hour: hourGmt, minute: minGmt,
+      prob: probM ? parseFloat(probM[1]) : null,
+      implied_odds: probM ? parseFloat(probM[2]) : null,
+      peak_prob: peakM ? parseFloat(peakM[1]) : null,
+      alert_odds: oddsM ? parseFloat(oddsM[1]) : null,
+      value_pct: valueM ? parseFloat(valueM[1]) : null,
+      prob_hist_min: null, prob_hist_max: null, predictability: null
+    });
+  }
+
+  // ── Опит №2: OddsTrack plain-text формат ──
+  var lines = chunk.split('\n').map(function(l){ return l.trim(); }).filter(Boolean);
+  var dateLineIdx = -1, dateMatch = null;
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(/^(\w+)\s+(\d+)\w*\s+(\d{1,2}):(\d{2})$/);
+    if (m) { dateLineIdx = i; dateMatch = m; break; }
+  }
+  if (dateLineIdx === -1) return null; // нито един формат не съвпадна
+
+  var leagueLine = lines[dateLineIdx + 1] || '';
+  var teamsLine  = lines[dateLineIdx + 2] || '';
+  var teamsM2 = teamsLine.match(/^(.+?)\s+v\s+(.+)$/i);
+  if (!teamsM2) return null;
+
+  function findVal(label) {
+    var idx = lines.findIndex(function(l){ return l.toLowerCase() === label.toLowerCase(); });
+    return (idx !== -1 && lines[idx+1]) ? lines[idx+1] : null;
+  }
+  var liveProbStr = findVal('Live Prob.') || findVal('Probability');
+  var impliedStr  = findVal('Implied');
+  var oddsStr     = findVal('Odds');
+  var valueStr    = findVal('Value');
+  var histLine     = lines.find(function(l){ return /Prob\.\s*History/i.test(l); });
+  var predLine      = lines.find(function(l){ return /Predictability/i.test(l); });
+  var histM = histLine ? histLine.match(/([\d.]+)\s*-\s*([\d.]+)/) : null;
+  var predM = predLine ? predLine.match(/Predictability:\s*(\w+)/i) : null;
+
+  return buildParsedAlert({
+    side: '?', timing: 'Live', // ⚠ OddsTrack форматът не показва изрично Home/Away/Opening/Closing
+    home: teamsM2[1].trim(), away: teamsM2[2].trim(),
+    league: leagueLine,
+    weekday: dateMatch[1], day: parseInt(dateMatch[2],10), hour: parseInt(dateMatch[3],10), minute: parseInt(dateMatch[4],10),
+    prob: liveProbStr ? parseFloat(liveProbStr) : null,
+    implied_odds: impliedStr ? parseFloat(impliedStr) : null,
+    peak_prob: null,
+    alert_odds: oddsStr ? parseFloat(oddsStr) : null,
+    value_pct: valueStr ? parseFloat(valueStr) : null,
+    prob_hist_min: histM ? parseFloat(histM[1]) : null,
+    prob_hist_max: histM ? parseFloat(histM[2]) : null,
+    predictability: predM ? predM[1].toLowerCase() : null
+  });
+}
+
+// ── Общ builder: смята kickoff (GMT/UK-local → истински UTC → BG час) ──
+function buildParsedAlert(d) {
+  var anchorUtc = resolveNextDate(d.weekday, d.day, d.hour, d.minute);
   if (!anchorUtc) return null;
   var ukOffset = ukOffsetForDate(anchorUtc);
   var kickoffUtc = new Date(anchorUtc.getTime() - ukOffset * 3600 * 1000);
@@ -10547,25 +10593,40 @@ function vbParseOneAlert(chunk) {
   var bgDateStr = bgTime.getUTCDate() + '.' + (bgTime.getUTCMonth()+1) + '.' + bgTime.getUTCFullYear();
 
   return {
-    side: sideM ? sideM[1] : '?',
-    timing: sideM ? sideM[2] : '?',
-    home: teamsM[1].trim(),
-    away: teamsM[2].trim(),
-    league: leagueM ? leagueM[1].trim() : '',
-    prob: probM ? parseFloat(probM[1]) : null,
-    implied_odds: probM ? parseFloat(probM[2]) : null,
-    peak_prob: peakM ? parseFloat(peakM[1]) : null,
-    alert_odds: oddsM ? parseFloat(oddsM[1]) : null,
-    value_pct: valueM ? parseFloat(valueM[1]) : null,
-    kickoff_utc: kickoffUtc.toISOString(),
-    bg_date_str: bgDateStr,
-    bg_time_str: bgStr
+    side: d.side, timing: d.timing, home: d.home, away: d.away, league: d.league,
+    prob: d.prob, implied_odds: d.implied_odds, peak_prob: d.peak_prob,
+    alert_odds: d.alert_odds, value_pct: d.value_pct,
+    prob_hist_min: d.prob_hist_min, prob_hist_max: d.prob_hist_max, predictability: d.predictability,
+    kickoff_utc: kickoffUtc.toISOString(), bg_date_str: bgDateStr, bg_time_str: bgStr
   };
+}
+
+function vbParseOneAlert(chunk) {
+  return parseAlertBlock(chunk);
 }
 
 // ── Разделя paste-натия текст на отделни известия по 🚨 и парсва всяко ──
 function vbParseMultiple(text) {
-  var chunks = text.split(/(?=🚨)/).map(function(s){ return s.trim(); }).filter(Boolean);
+  var chunks;
+  if (/🚨/.test(text)) {
+    chunks = text.split(/(?=🚨)/).map(function(s){ return s.trim(); }).filter(Boolean);
+  } else {
+    // OddsTrack формат — няма 🚨 разделител, режем по редовете-дати
+    // ("Thu 16th 21:00"), всеки такъв ред започва нов блок.
+    var lines = text.split('\n');
+    var blocks = [];
+    var cur = [];
+    lines.forEach(function(l){
+      if (/^\s*\w+\s+\d+\w*\s+\d{1,2}:\d{2}\s*$/.test(l)) {
+        if (cur.length) blocks.push(cur.join('\n'));
+        cur = [l];
+      } else {
+        cur.push(l);
+      }
+    });
+    if (cur.length) blocks.push(cur.join('\n'));
+    chunks = blocks.map(function(s){ return s.trim(); }).filter(Boolean);
+  }
   var out = [];
   chunks.forEach(function(c){
     var p = vbParseOneAlert(c);
@@ -10595,7 +10656,13 @@ function vbParseAndSave() {
       '<div style="font-size:.65rem;margin-bottom:.3rem">📊 ' + p.side + ' ' + p.timing + ' · Вероятност <b>' + (p.prob!=null?p.prob+'%':'—') + '</b> · Implied <b>' + (p.implied_odds!=null?p.implied_odds:'—') + '</b>' +
         (p.peak_prob!=null ? ' · 🏔️ Peak <b style="color:var(--pur)">' + p.peak_prob + '%</b>' : '') +
       '</div>' +
-      '<div style="font-size:.65rem;margin-bottom:.5rem">💰 Даден коеф.: <b>' + (p.alert_odds!=null?p.alert_odds:'—') + '</b> · Value: <b style="color:var(--grn)">' + (p.value_pct!=null?p.value_pct+'%':'—') + '</b></div>' +
+      '<div style="font-size:.65rem;margin-bottom:.3rem">💰 Даден коеф.: <b>' + (p.alert_odds!=null?p.alert_odds:'—') + '</b> · Value: <b style="color:var(--grn)">' + (p.value_pct!=null?p.value_pct+'%':'—') + '</b></div>' +
+      (p.predictability || p.prob_hist_min!=null ?
+        '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.4rem">' +
+          (p.predictability ? '🎯 Predictability: ' + p.predictability : '') +
+          (p.prob_hist_min!=null ? (p.predictability?' · ':'') + '📊 History: ' + p.prob_hist_min + '-' + p.prob_hist_max + '%' : '') +
+        '</div>' : '') +
+      (p.side === '?' ? '<div style="font-size:.58rem;color:var(--yellow);margin-bottom:.4rem">⚠ Няма явен Home/Away маркер в този формат — провери ръчно.</div>' : '') +
       '<div style="display:flex;gap:.4rem;align-items:center">' +
         '<input type="number" step=".01" id="vbPlayedOdds_' + i + '" placeholder="изигран коеф. (по избор сега)" style="flex:1;font-size:.65rem;padding:6px">' +
       '</div>' +
@@ -10745,6 +10812,11 @@ function vbLoadLog() {
         '<div style="font-size:.66rem;font-weight:700;color:var(--txt)">' + it.home + ' <span style="color:var(--dim)">vs</span> ' + it.away + '</div>' +
         '<div style="font-size:.58rem;color:var(--dim)">' + (it.league||'') + ' · ' + it.bg_date_str + ' ' + it.bg_time_str + ' · ' + it.side + '</div>' +
         '<div style="font-size:.6rem;margin-top:.2rem">Opening вер. ' + (it.prob!=null?it.prob+'%':'—') + (it.peak_prob!=null ? ' · 🏔️ Peak ' + it.peak_prob + '%' : '') + ' · Opening коеф. <b>' + (it.alert_odds!=null?it.alert_odds:'—') + '</b> · Value ' + (it.value_pct!=null?it.value_pct+'%':'—') + '</div>' +
+        (it.predictability || it.prob_hist_min!=null ?
+          '<div style="font-size:.58rem;color:var(--dim)">' +
+            (it.predictability ? '🎯 ' + it.predictability : '') +
+            (it.prob_hist_min!=null ? (it.predictability?' · ':'') + '📊 ' + it.prob_hist_min + '-' + it.prob_hist_max + '%' : '') +
+          '</div>' : '') +
         timelineHtml +
         playedHtml +
       '</div>';

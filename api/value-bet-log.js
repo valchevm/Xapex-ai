@@ -58,6 +58,9 @@ export default async function handler(req, res) {
         const newObs = {
           odds: row.alert_odds, prob: row.prob, peak_prob: row.peak_prob != null ? row.peak_prob : null,
           value_pct: row.value_pct, timing: row.timing, observed_at: new Date().toISOString(),
+          predictability: row.predictability != null ? row.predictability : null,
+          prob_hist_min: row.prob_hist_min != null ? row.prob_hist_min : null,
+          prob_hist_max: row.prob_hist_max != null ? row.prob_hist_max : null,
         };
         const match = existingByKey[key];
 
@@ -76,6 +79,9 @@ export default async function handler(req, res) {
             side: row.side, timing: row.timing,
             prob: row.prob, implied_odds: row.implied_odds, peak_prob: row.peak_prob != null ? row.peak_prob : null,
             alert_odds: row.alert_odds, value_pct: row.value_pct,
+            predictability: row.predictability != null ? row.predictability : null,
+            prob_hist_min: row.prob_hist_min != null ? row.prob_hist_min : null,
+            prob_hist_max: row.prob_hist_max != null ? row.prob_hist_max : null,
             kickoff_utc: row.kickoff_utc, bg_date_str: row.bg_date_str, bg_time_str: row.bg_time_str,
             played_odds: row.played_odds != null ? row.played_odds : null,
             played_at: row.played_at || null,
