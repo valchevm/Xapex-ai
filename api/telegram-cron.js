@@ -65,7 +65,7 @@ export default async function handler(req, res) {
       const msg =
         `🚨 <b>${it.home} vs ${it.away}</b>\n` +
         `🏆 ${it.league || ""}\n` +
-        `⚙️ ${it.side} ${it.timing}\n` +
+        `🎯 Пазар: <b>${it.side}</b>${it.timing ? " (" + it.timing + ")" : ""}\n` +
         (it.prob != null ? `✨ Вероятност: ${it.prob}%\n` : "") +
         (it.peak_prob != null ? `🏔️ Peak: ${it.peak_prob}%\n` : "") +
         (it.odds != null ? `📉 Коефициент: ${it.odds}\n` : "") +
