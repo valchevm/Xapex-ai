@@ -55,6 +55,15 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (req.method === "PATCH") {
+      const { id, side } = req.body || {};
+      if (!id || !side) { res.status(400).json({ ok: false, error: "missing_id_or_side" }); return; }
+      const r = await oraFetch(`/${TABLE}/${id}`, "PATCH", { side });
+      if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
+      res.status(200).json({ ok: true });
+      return;
+    }
+
     if (req.method === "DELETE") {
       const id = req.query?.id;
       if (!id) { res.status(400).json({ ok: false, error: "missing_id" }); return; }

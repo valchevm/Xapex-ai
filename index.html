@@ -3715,44 +3715,16 @@ input::placeholder, textarea::placeholder {
   </div>
   <div id="filterCheckPanel">
     <div style="font-size:.62rem;color:var(--dim);margin-bottom:.7rem;line-height:1.5">
-      Въведи вероятност + коефициент (opening и/или closing) за конкретен пазар — показва % движение и проверява дали влиза в предварително зададените критерии за тази комбинация.
+      Въведи вероятност + коефициент (opening и/или closing) за един или повече мача — показва % движение и проверява дали всеки влиза в предварително зададените критерии.
     </div>
 
-    <div class="g2" style="margin-bottom:.6rem">
-      <div>
-        <label>Пазар</label>
-        <select id="fcSide">
-          <option value="home">🏠 Домакин</option>
-          <option value="away">✈️ Гост</option>
-        </select>
-      </div>
-      <div>
-        <label>Оценявай спрямо</label>
-        <select id="fcTiming">
-          <option value="opening">Opening</option>
-          <option value="closing">Closing</option>
-        </select>
-      </div>
-    </div>
+    <div id="fcRows"></div>
 
-    <div style="margin-bottom:.6rem">
-      <label>Вероятност (OA/модел) %</label>
-      <input type="number" id="fcProb" step=".01" placeholder="напр. 34.15">
-    </div>
-
-    <div class="g2" style="margin-bottom:.6rem">
-      <div>
-        <label>Opening коефициент</label>
-        <input type="number" id="fcOpening" step=".01" placeholder="напр. 6.50">
-      </div>
-      <div>
-        <label>Текущ / Closing коефициент</label>
-        <input type="number" id="fcCurrent" step=".01" placeholder="напр. 7.50">
-      </div>
-    </div>
-
-    <button class="btn btn-p btn-action" onclick="fcCheck()" style="width:100%;margin-bottom:.6rem">
-      ⚡ Провери
+    <button class="btn btn-sec" onclick="fcAddRow()" style="width:100%;margin-bottom:.5rem;font-size:.65rem">
+      ➕ Добави мач
+    </button>
+    <button class="btn btn-p btn-action" onclick="fcCheckAll()" style="width:100%;margin-bottom:.6rem">
+      ⚡ Провери всички
     </button>
 
     <div id="fcResult"></div>
@@ -10551,8 +10523,13 @@ async function tgRenderQueue() {
     var items = (data && data.items) || [];
     if (!items.length) { box.innerHTML = '<div class="mw-empty">Няма насрочени известия.</div>'; return; }
     box.innerHTML = items.map(function(it){
-      return '<div style="display:flex;justify-content:space-between;align-items:center;background:#0a1429;border:1px solid var(--bord);border-radius:7px;padding:.5rem .7rem;margin-bottom:.4rem;font-size:.66rem">' +
-        '<span>' + (it.sent ? '✅ ' : '⏳ ') + it.home + ' vs ' + it.away + ' · <b>' + (it.side||'?') + '</b> — ' + it.bg_time_str + '</span>' +
+      var marketPart = it.sent
+        ? '<b>' + (it.side||'?') + '</b>'
+        : '<select id="tgQMarket_' + it.id + '" onchange="tgUpdateMarket(' + it.id + ')" style="font-size:.62rem;padding:2px;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:4px">' +
+            ['Home','Away','Draw','Over','Under','BTTS'].map(function(s){ return '<option value="' + s + '"' + (s===it.side?' selected':'') + '>' + s + '</option>'; }).join('') +
+          '</select>';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;background:#0a1429;border:1px solid var(--bord);border-radius:7px;padding:.5rem .7rem;margin-bottom:.4rem;font-size:.66rem;gap:.4rem">' +
+        '<span>' + (it.sent ? '✅ ' : '⏳ ') + it.home + ' vs ' + it.away + ' · ' + marketPart + ' — ' + it.bg_time_str + '</span>' +
         '<button onclick="tgDeleteQueueItem(' + it.id + ')" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:.9rem">🗑</button>' +
       '</div>';
     }).join('');
@@ -10560,6 +10537,20 @@ async function tgRenderQueue() {
     box.innerHTML = '<div style="color:var(--red);font-size:.62rem">⚠ Грешка при зареждане: ' + e.message + '</div>';
   }
 }
+
+window.tgUpdateMarket = function(id) {
+  var el = document.getElementById('tgQMarket_' + id);
+  if (!el) return;
+  fetch('/api/telegram-queue', {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id, side: el.value })
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if (typeof showToast === 'function') showToast(data && data.ok ? '✅ Пазарът е обновен' : '❌ Грешка', data && data.ok ? 'success' : 'error');
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+  });
+};
 
 async function tgDeleteQueueItem(id) {
   try {
@@ -11042,15 +11033,33 @@ function vbLoadLog() {
           : 'var(--dim)';
 
         playedHtml =
-          '<div style="font-size:.62rem;margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06)">' +
+          '<div id="vbPlayedView_' + it.id + '" style="font-size:.62rem;margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06)">' +
             '<div style="margin-bottom:.2rem">⏱ Закъснение до залог: <b style="color:' + delayColor + '">' + delayStr + '</b>' + toKickoffStr + '</div>' +
-            '🎯 Изигран: <b>' + it.played_odds.toFixed(2) + '</b> спрямо opening ' +
-            '<span style="color:' + movColor + '">' + movIcon + ' ' + (movPct>=0?'+':'') + movPct.toFixed(1) + '% спад' + '</span>' +
-            (edgeAtPlay != null ? ' · Value@игра: <b>' + edgeAtPlay.toFixed(1) + '%</b>' : '') +
+            '<div style="display:flex;align-items:center;gap:.4rem">' +
+              '<span>🎯 Изигран: <b>' + it.played_odds.toFixed(2) + '</b> (' + (it.side||'?') + ') спрямо opening ' +
+              '<span style="color:' + movColor + '">' + movIcon + ' ' + (movPct>=0?'+':'') + movPct.toFixed(1) + '% спад' + '</span>' +
+              (edgeAtPlay != null ? ' · Value@игра: <b>' + edgeAtPlay.toFixed(1) + '%</b>' : '') + '</span>' +
+              '<button onclick="vbToggleEdit(' + it.id + ')" style="margin-left:auto;background:none;border:none;color:var(--acc);cursor:pointer;font-size:.65rem">✏️</button>' +
+            '</div>' +
+          '</div>' +
+          '<div id="vbPlayedEdit_' + it.id + '" style="display:none;margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06)">' +
+            '<div style="display:flex;gap:.3rem;margin-bottom:.3rem">' +
+              '<select id="vbEditSide_' + it.id + '" style="flex:1;font-size:.6rem;padding:4px">' +
+                ['Home','Away','Draw','Over','Under','BTTS'].map(function(s){ return '<option value="' + s + '"' + (s===it.side?' selected':'') + '>' + s + '</option>'; }).join('') +
+              '</select>' +
+              '<input type="number" step=".01" id="vbEditOdds_' + it.id + '" value="' + it.played_odds + '" style="flex:1;font-size:.62rem;padding:4px">' +
+            '</div>' +
+            '<div style="display:flex;gap:.3rem">' +
+              '<button class="btn btn-p" style="flex:1;font-size:.58rem;padding:4px" onclick="vbSaveEdit(' + it.id + ')">💾 Запази</button>' +
+              '<button class="btn btn-sec" style="flex:1;font-size:.58rem;padding:4px" onclick="vbToggleEdit(' + it.id + ')">Откажи</button>' +
+            '</div>' +
           '</div>';
       } else {
         playedHtml =
           '<div style="margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:.4rem">' +
+            '<select id="vbLogSideInput_' + it.id + '" style="font-size:.62rem;padding:4px">' +
+              ['Home','Away','Draw','Over','Under','BTTS'].map(function(s){ return '<option value="' + s + '"' + (s===it.side?' selected':'') + '>' + s + '</option>'; }).join('') +
+            '</select>' +
             '<input type="number" step=".01" id="vbLogPlayedInput_' + it.id + '" placeholder="изигран коеф." style="flex:1;font-size:.62rem;padding:4px">' +
             '<button class="btn btn-p" style="font-size:.58rem;padding:4px 8px" onclick="vbUpdatePlayedOdds(' + it.id + ')">💾</button>' +
           '</div>';
@@ -11076,15 +11085,46 @@ function vbLoadLog() {
 
 window.vbUpdatePlayedOdds = function(id) {
   var el = document.getElementById('vbLogPlayedInput_' + id);
+  var sideEl = document.getElementById('vbLogSideInput_' + id);
   var val = el && el.value !== '' ? parseFloat(el.value) : null;
   if (val == null || isNaN(val)) return;
   fetch('/api/value-bet-log', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: id, played_odds: val, played_at: new Date().toISOString() })
+    body: JSON.stringify({ id: id, played_odds: val, played_at: new Date().toISOString(), side: sideEl ? sideEl.value : null })
   }).then(function(r){ return r.json(); }).then(function(data){
     if (data && data.ok) {
       if (typeof showToast === 'function') showToast('✅ Изигран коефициент записан', 'success');
+      vbLoadLog();
+    } else {
+      if (typeof showToast === 'function') showToast('❌ Грешка при запис', 'error');
+    }
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+  });
+};
+
+window.vbToggleEdit = function(id) {
+  var view = document.getElementById('vbPlayedView_' + id);
+  var edit = document.getElementById('vbPlayedEdit_' + id);
+  if (!view || !edit) return;
+  var showEdit = edit.style.display === 'none';
+  edit.style.display = showEdit ? 'block' : 'none';
+  view.style.display = showEdit ? 'none' : 'block';
+};
+
+window.vbSaveEdit = function(id) {
+  var sideEl = document.getElementById('vbEditSide_' + id);
+  var oddsEl = document.getElementById('vbEditOdds_' + id);
+  var val = oddsEl && oddsEl.value !== '' ? parseFloat(oddsEl.value) : null;
+  if (val == null || isNaN(val)) return;
+  fetch('/api/value-bet-log', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id, played_odds: val, side: sideEl ? sideEl.value : null })
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if (data && data.ok) {
+      if (typeof showToast === 'function') showToast('✅ Редакцията е записана', 'success');
       vbLoadLog();
     } else {
       if (typeof showToast === 'function') showToast('❌ Грешка при запис', 'error');
@@ -11151,20 +11191,42 @@ function fcSaveSettingsFromUI() {
   if (typeof showToast === 'function') showToast('✅ Критериите са запазени', 'success');
 }
 
-function fcCheck() {
-  var side   = document.getElementById('fcSide').value;     // home | away
-  var timing = document.getElementById('fcTiming').value;   // opening | closing
-  var prob   = parseFloat(document.getElementById('fcProb').value);
-  var opening = parseFloat(document.getElementById('fcOpening').value);
-  var current = parseFloat(document.getElementById('fcCurrent').value);
-  var box = document.getElementById('fcResult');
+var FC_ROW_COUNT = 0;
+
+function fcRowTemplate(i) {
+  return '<div class="fc-row" id="fcRow_' + i + '" style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.5rem;position:relative">' +
+    (i > 0 ? '<button onclick="fcRemoveRow(' + i + ')" style="position:absolute;top:.4rem;right:.4rem;background:none;border:none;color:var(--red);font-size:.9rem;cursor:pointer">✕</button>' : '') +
+    '<div class="g2" style="margin-bottom:.5rem">' +
+      '<div><label style="font-size:.6rem">Пазар</label>' +
+        '<select id="fcSide_' + i + '"><option value="home">🏠 Домакин</option><option value="away">✈️ Гост</option></select></div>' +
+      '<div><label style="font-size:.6rem">Оценявай спрямо</label>' +
+        '<select id="fcTiming_' + i + '"><option value="opening">Opening</option><option value="closing">Closing</option></select></div>' +
+    '</div>' +
+    '<div style="margin-bottom:.5rem"><label style="font-size:.6rem">Вероятност %</label>' +
+      '<input type="number" id="fcProb_' + i + '" step=".01" placeholder="напр. 34.15"></div>' +
+    '<div class="g2">' +
+      '<div><label style="font-size:.6rem">Opening коефициент</label>' +
+        '<input type="number" id="fcOpening_' + i + '" step=".01" placeholder="напр. 6.50"></div>' +
+      '<div><label style="font-size:.6rem">Текущ / Closing коефициент</label>' +
+        '<input type="number" id="fcCurrent_' + i + '" step=".01" placeholder="напр. 7.50"></div>' +
+    '</div>' +
+  '</div>';
+}
+
+function fcAddRow() {
+  var box = document.getElementById('fcRows');
   if (!box) return;
+  var i = FC_ROW_COUNT++;
+  box.insertAdjacentHTML('beforeend', fcRowTemplate(i));
+}
 
-  if (isNaN(prob) || (isNaN(opening) && isNaN(current))) {
-    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Въведи поне вероятност и един коефициент (opening или текущ).</div>';
-    return;
-  }
+function fcRemoveRow(i) {
+  var el = document.getElementById('fcRow_' + i);
+  if (el) el.remove();
+}
 
+// ── Чиста функция за проверка на 1 мач спрямо критериите — без DOM ──
+function fcEvaluate(side, timing, prob, opening, current) {
   var valOpening = !isNaN(opening) ? (prob/100*opening - 1)*100 : null;
   var valCurrent = !isNaN(current) ? (prob/100*current - 1)*100 : null;
   var movement = (!isNaN(opening) && !isNaN(current) && opening > 0)
@@ -11192,44 +11254,74 @@ function fcCheck() {
 
   var movArrow = movement == null ? '' : (movement > 0 ? '📈 нагоре' : movement < 0 ? '📉 надолу' : '➡️ без промяна');
   var movWarn = '';
-  if (movement != null) {
-    if (timing === 'closing' && valOpening != null && valOpening < crit.minValue && evalValue >= crit.minValue) {
-      movWarn = '<div style="color:var(--yellow);font-size:.62rem;margin-top:.4rem">⚠ Value-то се появява едва СЛЕД движение нагоре (не е било налично при opening) — исторически такива случаи представляват по-слаб сигнал.</div>';
-    }
+  if (movement != null && timing === 'closing' && valOpening != null && valOpening < crit.minValue && evalValue >= crit.minValue) {
+    movWarn = '<div style="color:var(--yellow);font-size:.6rem;margin-top:.3rem">⚠ Value-то се появява едва СЛЕД движение нагоре — по-слаб сигнал.</div>';
   }
 
-  // ✅ Fair odds за въведената вероятност + implied вероятност за
-  // opening/текущия коефициент — директно съответствие вероятност↔коефициент.
   var fairOddsForProb = prob > 0 ? (100 / prob) : null;
   var impliedProbOpening = (!isNaN(opening) && opening > 0) ? (100 / opening) : null;
   var impliedProbCurrent = (!isNaN(current) && current > 0) ? (100 / current) : null;
 
-  var conversionHtml =
-    '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.6rem">' +
-      '<div style="font-size:.6rem;color:var(--dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.4rem">Вероятност ↔ Коефициент</div>' +
-      (fairOddsForProb != null ? '<div style="font-size:.7rem;margin-bottom:.25rem">🎯 Вероятност <b>' + prob.toFixed(2) + '%</b> отговаря на коеф. <b style="color:var(--acc)">' + fairOddsForProb.toFixed(2) + '</b></div>' : '') +
-      (impliedProbOpening != null ? '<div style="font-size:.7rem;margin-bottom:.25rem">🟦 Opening <b>' + opening.toFixed(2) + '</b> отговаря на вероятност <b style="color:var(--acc)">' + impliedProbOpening.toFixed(2) + '%</b></div>' : '') +
-      (impliedProbCurrent != null ? '<div style="font-size:.7rem">🟩 Текущ (Closing) <b>' + current.toFixed(2) + '</b> отговаря на вероятност <b style="color:var(--acc)">' + impliedProbCurrent.toFixed(2) + '%</b></div>' : '') +
-    '</div>';
+  return { pass:pass, crit:crit, checks:checks, valOpening:valOpening, valCurrent:valCurrent,
+    movement:movement, movArrow:movArrow, movWarn:movWarn,
+    fairOddsForProb:fairOddsForProb, impliedProbOpening:impliedProbOpening, impliedProbCurrent:impliedProbCurrent,
+    side:side, timing:timing, prob:prob, opening:opening, current:current };
+}
 
-  var html =
-    '<div style="background:' + (pass ? 'rgba(52,211,153,.08)' : 'rgba(248,113,113,.08)') + ';border:1px solid ' + (pass ? 'rgba(52,211,153,.4)' : 'rgba(248,113,113,.4)') + ';border-radius:9px;padding:.7rem">' +
-      '<div style="font-size:.85rem;font-weight:700;color:' + (pass ? 'var(--grn)' : 'var(--red)') + ';margin-bottom:.5rem">' +
-        (pass ? '✅ ВЛИЗА във филтрите (' + crit.label + ')' : '❌ НЕ влиза във филтрите (' + crit.label + ')') +
-      '</div>' +
-      conversionHtml +
-      '<div class="mw-result-row" style="margin-bottom:.5rem">' +
-        (valOpening != null ? '<span class="mw-chip">Value@Opening: ' + valOpening.toFixed(1) + '%</span>' : '') +
-        (valCurrent != null ? '<span class="mw-chip">Value@Current: ' + valCurrent.toFixed(1) + '%</span>' : '') +
-        (movement != null ? '<span class="mw-chip">Движение: ' + (movement>0?'+':'') + movement.toFixed(1) + '% ' + movArrow + '</span>' : '') +
-      '</div>' +
-      checks.map(function(c){
-        return '<div style="font-size:.65rem;color:' + (c.ok ? 'var(--grn)' : 'var(--red)') + '">' + (c.ok ? '✓' : '✗') + ' ' + c.label + ' — текущо: ' + c.detail + '</div>';
-      }).join('') +
-      movWarn +
+function fcRenderResult(r, label) {
+  var conversionHtml =
+    '<div style="background:#070d16;border:1px solid var(--bord);border-radius:8px;padding:.5rem;margin-bottom:.5rem">' +
+      (r.fairOddsForProb != null ? '<div style="font-size:.62rem;margin-bottom:.2rem">🎯 ' + r.prob.toFixed(2) + '% ↔ коеф. <b style="color:var(--acc)">' + r.fairOddsForProb.toFixed(2) + '</b></div>' : '') +
+      (r.impliedProbOpening != null ? '<div style="font-size:.62rem;margin-bottom:.2rem">🟦 Opening ' + r.opening.toFixed(2) + ' ↔ <b style="color:var(--acc)">' + r.impliedProbOpening.toFixed(2) + '%</b></div>' : '') +
+      (r.impliedProbCurrent != null ? '<div style="font-size:.62rem">🟩 Closing ' + r.current.toFixed(2) + ' ↔ <b style="color:var(--acc)">' + r.impliedProbCurrent.toFixed(2) + '%</b></div>' : '') +
     '</div>';
+  return '<div style="background:' + (r.pass ? 'rgba(52,211,153,.08)' : 'rgba(248,113,113,.08)') + ';border:1px solid ' + (r.pass ? 'rgba(52,211,153,.4)' : 'rgba(248,113,113,.4)') + ';border-radius:9px;padding:.65rem;margin-bottom:.5rem">' +
+    (label ? '<div style="font-size:.68rem;color:var(--dim);margin-bottom:.3rem">' + label + '</div>' : '') +
+    '<div style="font-size:.78rem;font-weight:700;color:' + (r.pass ? 'var(--grn)' : 'var(--red)') + ';margin-bottom:.4rem">' +
+      (r.pass ? '✅ ВЛИЗА (' + r.crit.label + ')' : '❌ НЕ влиза (' + r.crit.label + ')') +
+    '</div>' +
+    conversionHtml +
+    '<div class="mw-result-row" style="margin-bottom:.4rem">' +
+      (r.valOpening != null ? '<span class="mw-chip">Value@Open: ' + r.valOpening.toFixed(1) + '%</span>' : '') +
+      (r.valCurrent != null ? '<span class="mw-chip">Value@Close: ' + r.valCurrent.toFixed(1) + '%</span>' : '') +
+      (r.movement != null ? '<span class="mw-chip">Движение: ' + (r.movement>0?'+':'') + r.movement.toFixed(1) + '% ' + r.movArrow + '</span>' : '') +
+    '</div>' +
+    r.checks.map(function(c){ return '<div style="font-size:.62rem;color:' + (c.ok ? 'var(--grn)' : 'var(--red)') + '">' + (c.ok ? '✓' : '✗') + ' ' + c.label + ' — ' + c.detail + '</div>'; }).join('') +
+    r.movWarn +
+  '</div>';
+}
+
+function fcCheckAll() {
+  var box = document.getElementById('fcResult');
+  if (!box) return;
+  var rowEls = document.querySelectorAll('#fcRows .fc-row');
+  if (!rowEls.length) { box.innerHTML = '<div style="color:var(--red);font-size:.65rem">⚠ Няма добавени мачове.</div>'; return; }
+
+  var html = '';
+  var anyValid = false;
+  rowEls.forEach(function(rowEl, idx){
+    var id = rowEl.id.replace('fcRow_', '');
+    var side = document.getElementById('fcSide_' + id).value;
+    var timing = document.getElementById('fcTiming_' + id).value;
+    var prob = parseFloat(document.getElementById('fcProb_' + id).value);
+    var opening = parseFloat(document.getElementById('fcOpening_' + id).value);
+    var current = parseFloat(document.getElementById('fcCurrent_' + id).value);
+    if (isNaN(prob) || (isNaN(opening) && isNaN(current))) {
+      html += '<div style="font-size:.62rem;color:var(--dim);padding:.3rem 0">Мач #' + (idx+1) + ': липсват данни, пропуснат.</div>';
+      return;
+    }
+    anyValid = true;
+    var r = fcEvaluate(side, timing, prob, opening, current);
+    html += fcRenderResult(r, 'Мач #' + (idx+1));
+  });
+  if (!anyValid) { box.innerHTML = '<div style="color:var(--red);font-size:.65rem;padding:.5rem 0">⚠ Въведи поне вероятност и един коефициент за поне един мач.</div>'; return; }
   box.innerHTML = html;
 }
+
+document.addEventListener('DOMContentLoaded', function(){
+  var box = document.getElementById('fcRows');
+  if (box && !box.children.length) fcAddRow();
+});
 
 
 function toggleArbCalc() {

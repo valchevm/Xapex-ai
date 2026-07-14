@@ -98,9 +98,13 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "PUT") {
-      const { id, played_odds, played_at } = req.body || {};
+      const { id, played_odds, played_at, side } = req.body || {};
       if (!id) { res.status(400).json({ ok: false, error: "missing_id" }); return; }
-      const r = await oraFetch(`/${TABLE}/${id}`, "PATCH", { played_odds, played_at });
+      const upd = {};
+      if (played_odds != null) upd.played_odds = played_odds;
+      if (played_at != null) upd.played_at = played_at;
+      if (side != null) upd.side = side;
+      const r = await oraFetch(`/${TABLE}/${id}`, "PATCH", upd);
       if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
       res.status(200).json({ ok: true });
       return;
