@@ -44,15 +44,15 @@ export default async function handler(req, res) {
       const items = existing.json?.items || [];
 
       if (items.length > 0) {
-        const upd = {
-          oa_prob_home: row.oa_prob_home, oa_prob_draw: row.oa_prob_draw, oa_prob_away: row.oa_prob_away,
-          oa_prob_btts: row.oa_prob_btts, oa_prob_over: row.oa_prob_over, oa_prob_under: row.oa_prob_under,
-          model_prob_home: row.model_prob_home, model_prob_draw: row.model_prob_draw, model_prob_away: row.model_prob_away,
-          model_prob_btts: row.model_prob_btts, model_prob_over: row.model_prob_over, model_prob_under: row.model_prob_under,
-          league: row.league, country: row.country,
-          updated_at: new Date().toISOString(),
-        };
-        const r = await oraFetch(`/${TABLE}/${items[0].id}`, "PATCH", upd);
+        const full = { ...items[0] };
+        delete full.links; delete full._links;
+        full.oa_prob_home = row.oa_prob_home; full.oa_prob_draw = row.oa_prob_draw; full.oa_prob_away = row.oa_prob_away;
+        full.oa_prob_btts = row.oa_prob_btts; full.oa_prob_over = row.oa_prob_over; full.oa_prob_under = row.oa_prob_under;
+        full.model_prob_home = row.model_prob_home; full.model_prob_draw = row.model_prob_draw; full.model_prob_away = row.model_prob_away;
+        full.model_prob_btts = row.model_prob_btts; full.model_prob_over = row.model_prob_over; full.model_prob_under = row.model_prob_under;
+        full.league = row.league; full.country = row.country;
+        full.updated_at = new Date().toISOString();
+        const r = await oraFetch(`/${TABLE}/${items[0].id}`, "PUT", full);
         res.status(200).json({ ok: r.ok, action: "updated", id: items[0].id });
         return;
       }
@@ -79,11 +79,17 @@ export default async function handler(req, res) {
       if (!id || (!actual_result && !actual_btts && !actual_ou25)) {
         res.status(400).json({ ok: false, error: "missing_id_or_result" }); return;
       }
-      const upd = {};
-      if (actual_result) upd.actual_result = actual_result;
-      if (actual_btts) upd.actual_btts = actual_btts;
-      if (actual_ou25) upd.actual_ou25 = actual_ou25;
-      const r = await oraFetch(`/${TABLE}/${id}`, "PATCH", upd);
+      const existing = await oraFetch(`/${TABLE}/${id}`, "GET");
+      if (!existing.ok || !existing.json) {
+        res.status(200).json({ ok: false, error: `Не намерих запис ${id}: HTTP ${existing.status}` });
+        return;
+      }
+      const full = { ...existing.json };
+      delete full.links; delete full._links;
+      if (actual_result) full.actual_result = actual_result;
+      if (actual_btts) full.actual_btts = actual_btts;
+      if (actual_ou25) full.actual_ou25 = actual_ou25;
+      const r = await oraFetch(`/${TABLE}/${id}`, "PUT", full);
       if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
       res.status(200).json({ ok: true });
       return;

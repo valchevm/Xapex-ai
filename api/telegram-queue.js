@@ -58,7 +58,14 @@ export default async function handler(req, res) {
     if (req.method === "PATCH") {
       const { id, side } = req.body || {};
       if (!id || !side) { res.status(400).json({ ok: false, error: "missing_id_or_side" }); return; }
-      const r = await oraFetch(`/${TABLE}/${id}`, "PATCH", { side });
+      const existing = await oraFetch(`/${TABLE}/${id}`, "GET");
+      if (!existing.ok || !existing.json) {
+        res.status(200).json({ ok: false, error: `Не намерих запис ${id}: HTTP ${existing.status}` });
+        return;
+      }
+      const full = { ...existing.json, side };
+      delete full.links; delete full._links;
+      const r = await oraFetch(`/${TABLE}/${id}`, "PUT", full);
       if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
       res.status(200).json({ ok: true });
       return;
