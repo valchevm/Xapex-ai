@@ -66,10 +66,13 @@ export default async function handler(req, res) {
 
         if (match) {
           // ── Съществуващ мач/пазар → добавяме нова observation точка ──
+          // ORDS връща 405 на PATCH за тази таблица — GET + пълен PUT вместо това.
           let obs = [];
           try { obs = match.observations ? JSON.parse(match.observations) : []; } catch (e) {}
           obs.push(newObs);
-          const r = await oraFetch(`/${TABLE}/${match.id}`, "PATCH", { observations: JSON.stringify(obs) });
+          const full = { ...match, observations: JSON.stringify(obs) };
+          delete full.links; delete full._links;
+          const r = await oraFetch(`/${TABLE}/${match.id}`, "PUT", full);
           if (r.ok) appended++;
           else errors.push(`${row.home} vs ${row.away}: HTTP ${r.status} (append) ${r.text.slice(0, 150)}`);
         } else {
@@ -100,11 +103,23 @@ export default async function handler(req, res) {
     if (req.method === "PUT") {
       const { id, played_odds, played_at, side } = req.body || {};
       if (!id) { res.status(400).json({ ok: false, error: "missing_id" }); return; }
-      const upd = {};
-      if (played_odds != null) upd.played_odds = played_odds;
-      if (played_at != null) upd.played_at = played_at;
-      if (side != null) upd.side = side;
-      const r = await oraFetch(`/${TABLE}/${id}`, "PATCH", upd);
+
+      // ✅ ORDS връща HTTP 405 (Method Not Allowed) на PATCH за тази
+      // таблица (вероятно заради CLOB колоната observations) — вместо
+      // частичен PATCH, взимаме целия ред и го презаписваме с PUT,
+      // което е по-универсално поддържано от ORDS AutoREST.
+      const existing = await oraFetch(`/${TABLE}/${id}`, "GET");
+      if (!existing.ok || !existing.json) {
+        res.status(200).json({ ok: false, error: `Не намерих запис ${id}: HTTP ${existing.status}` });
+        return;
+      }
+      const full = { ...existing.json };
+      delete full.links; delete full._links; // ORDS мета полета, не се приемат обратно в PUT body
+      if (played_odds != null) full.played_odds = played_odds;
+      if (played_at != null) full.played_at = played_at;
+      if (side != null) full.side = side;
+
+      const r = await oraFetch(`/${TABLE}/${id}`, "PUT", full);
       if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
       res.status(200).json({ ok: true });
       return;
