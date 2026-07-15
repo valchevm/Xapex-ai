@@ -11043,25 +11043,29 @@ function vbLoadLog() {
             '</div>' +
           '</div>' +
           '<div id="vbPlayedEdit_' + it.id + '" style="display:none;margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06)">' +
-            '<div style="display:flex;gap:.3rem;margin-bottom:.3rem">' +
-              '<select id="vbEditSide_' + it.id + '" style="flex:1;font-size:.6rem;padding:4px">' +
-                ['Home','Away','Draw','Over','Under','BTTS'].map(function(s){ return '<option value="' + s + '"' + (s===it.side?' selected':'') + '>' + s + '</option>'; }).join('') +
-              '</select>' +
-              '<input type="number" step=".01" id="vbEditOdds_' + it.id + '" value="' + it.played_odds + '" style="flex:1;font-size:.62rem;padding:4px">' +
-            '</div>' +
+            '<div style="font-size:.56rem;color:var(--dim);margin-bottom:.25rem">Пазар:</div>' +
+            '<select id="vbEditSide_' + it.id + '" style="width:100%;font-size:.68rem;padding:8px;margin-bottom:.4rem;box-sizing:border-box">' +
+              ['Home','Away','Draw','Over','Under','BTTS'].map(function(s){ return '<option value="' + s + '"' + (s===it.side?' selected':'') + '>' + s + '</option>'; }).join('') +
+            '</select>' +
+            '<div style="font-size:.56rem;color:var(--dim);margin-bottom:.25rem">Изигран коефициент:</div>' +
+            '<input type="number" step=".01" id="vbEditOdds_' + it.id + '" value="' + it.played_odds + '" style="width:100%;font-size:.72rem;padding:8px;margin-bottom:.4rem;box-sizing:border-box">' +
             '<div style="display:flex;gap:.3rem">' +
-              '<button class="btn btn-p" style="flex:1;font-size:.58rem;padding:4px" onclick="vbSaveEdit(' + it.id + ')">💾 Запази</button>' +
-              '<button class="btn btn-sec" style="flex:1;font-size:.58rem;padding:4px" onclick="vbToggleEdit(' + it.id + ')">Откажи</button>' +
+              '<button class="btn btn-p" style="flex:1;font-size:.62rem;padding:6px" onclick="vbSaveEdit(' + it.id + ')">💾 Запази</button>' +
+              '<button class="btn btn-sec" style="flex:1;font-size:.62rem;padding:6px" onclick="vbToggleEdit(' + it.id + ')">Откажи</button>' +
             '</div>' +
           '</div>';
       } else {
         playedHtml =
-          '<div style="margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06);display:flex;gap:.4rem">' +
-            '<select id="vbLogSideInput_' + it.id + '" style="font-size:.62rem;padding:4px">' +
+          '<div style="margin-top:.3rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.06)">' +
+            '<div style="font-size:.56rem;color:var(--dim);margin-bottom:.25rem">Пазар:</div>' +
+            '<select id="vbLogSideInput_' + it.id + '" style="width:100%;font-size:.68rem;padding:8px;margin-bottom:.4rem;box-sizing:border-box">' +
               ['Home','Away','Draw','Over','Under','BTTS'].map(function(s){ return '<option value="' + s + '"' + (s===it.side?' selected':'') + '>' + s + '</option>'; }).join('') +
             '</select>' +
-            '<input type="number" step=".01" id="vbLogPlayedInput_' + it.id + '" placeholder="изигран коеф." style="flex:1;font-size:.62rem;padding:4px">' +
-            '<button class="btn btn-p" style="font-size:.58rem;padding:4px 8px" onclick="vbUpdatePlayedOdds(' + it.id + ')">💾</button>' +
+            '<div style="font-size:.56rem;color:var(--dim);margin-bottom:.25rem">Изигран коефициент:</div>' +
+            '<div style="display:flex;gap:.4rem">' +
+              '<input type="number" step=".01" id="vbLogPlayedInput_' + it.id + '" placeholder="напр. 4.20" style="flex:1;min-width:0;font-size:.72rem;padding:8px;box-sizing:border-box">' +
+              '<button class="btn btn-p" style="font-size:.65rem;padding:8px 14px;white-space:nowrap" onclick="vbUpdatePlayedOdds(' + it.id + ')">💾 Запази</button>' +
+            '</div>' +
           '</div>';
       }
 
