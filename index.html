@@ -11062,10 +11062,8 @@ function vbLoadLog() {
               ['Home','Away','Draw','Over','Under','BTTS'].map(function(s){ return '<option value="' + s + '"' + (s===it.side?' selected':'') + '>' + s + '</option>'; }).join('') +
             '</select>' +
             '<div style="font-size:.56rem;color:var(--dim);margin-bottom:.25rem">Изигран коефициент:</div>' +
-            '<div style="display:flex;gap:.4rem">' +
-              '<input type="number" step=".01" id="vbLogPlayedInput_' + it.id + '" placeholder="напр. 4.20" style="flex:1;min-width:0;font-size:.72rem;padding:8px;box-sizing:border-box">' +
-              '<button class="btn btn-p" style="font-size:.65rem;padding:8px 14px;white-space:nowrap" onclick="vbUpdatePlayedOdds(' + it.id + ')">💾 Запази</button>' +
-            '</div>' +
+            '<input type="number" step=".01" id="vbLogPlayedInput_' + it.id + '" placeholder="напр. 4.20" style="width:100%;font-size:.72rem;padding:8px;margin-bottom:.4rem;box-sizing:border-box">' +
+            '<button class="btn btn-p" style="width:100%;font-size:.68rem;padding:9px" onclick="vbUpdatePlayedOdds(' + it.id + ')">💾 Запази</button>' +
           '</div>';
       }
 
