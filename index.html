@@ -11089,19 +11089,24 @@ window.vbUpdatePlayedOdds = function(id) {
   var el = document.getElementById('vbLogPlayedInput_' + id);
   var sideEl = document.getElementById('vbLogSideInput_' + id);
   var val = el && el.value !== '' ? parseFloat(el.value) : null;
-  if (val == null || isNaN(val)) return;
+  if (val == null || isNaN(val)) {
+    if (typeof showToast === 'function') showToast('⚠ Въведи валиден коефициент', 'warn');
+    return;
+  }
   fetch('/api/value-bet-log', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: id, played_odds: val, played_at: new Date().toISOString(), side: sideEl ? sideEl.value : null })
-  }).then(function(r){ return r.json(); }).then(function(data){
-    if (data && data.ok) {
+  }).then(function(r){ return r.json().then(function(d){ return {status:r.status, data:d}; }); }).then(function(res){
+    if (res.data && res.data.ok) {
       if (typeof showToast === 'function') showToast('✅ Изигран коефициент записан', 'success');
       vbLoadLog();
     } else {
-      if (typeof showToast === 'function') showToast('❌ Грешка при запис', 'error');
+      console.error('[vbUpdatePlayedOdds] fail', res);
+      if (typeof showToast === 'function') showToast('❌ Грешка: ' + (res.data && res.data.error ? res.data.error : 'HTTP ' + res.status), 'error');
     }
   }).catch(function(e){
+    console.error('[vbUpdatePlayedOdds] exception', e);
     if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
   });
 };
@@ -11119,19 +11124,24 @@ window.vbSaveEdit = function(id) {
   var sideEl = document.getElementById('vbEditSide_' + id);
   var oddsEl = document.getElementById('vbEditOdds_' + id);
   var val = oddsEl && oddsEl.value !== '' ? parseFloat(oddsEl.value) : null;
-  if (val == null || isNaN(val)) return;
+  if (val == null || isNaN(val)) {
+    if (typeof showToast === 'function') showToast('⚠ Въведи валиден коефициент', 'warn');
+    return;
+  }
   fetch('/api/value-bet-log', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id: id, played_odds: val, side: sideEl ? sideEl.value : null })
-  }).then(function(r){ return r.json(); }).then(function(data){
-    if (data && data.ok) {
+  }).then(function(r){ return r.json().then(function(d){ return {status:r.status, data:d}; }); }).then(function(res){
+    if (res.data && res.data.ok) {
       if (typeof showToast === 'function') showToast('✅ Редакцията е записана', 'success');
       vbLoadLog();
     } else {
-      if (typeof showToast === 'function') showToast('❌ Грешка при запис', 'error');
+      console.error('[vbSaveEdit] fail', res);
+      if (typeof showToast === 'function') showToast('❌ Грешка: ' + (res.data && res.data.error ? res.data.error : 'HTTP ' + res.status), 'error');
     }
   }).catch(function(e){
+    console.error('[vbSaveEdit] exception', e);
     if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
   });
 };
