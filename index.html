@@ -10931,15 +10931,25 @@ function vbSaveAllPending() {
     body: JSON.stringify({ rows: rows })
   }).then(function(r){ return r.json(); }).then(function(data){
     if (data && data.ok) {
-      if (typeof showToast === 'function') showToast('✅ Запазени ' + (data.count||rows.length) + ' залога', 'success');
+      var savedN = (data.created||0) + (data.appended||0) || data.count || rows.length;
+      if (Array.isArray(data.errors) && data.errors.length) {
+        console.warn('[vbSaveAllPending] partial fail', data);
+        if (typeof showToast === 'function') showToast('⚠ Запазени ' + savedN + '/' + rows.length + ' — грешки: ' + data.errors.join(' · '), 'warn');
+      } else {
+        if (typeof showToast === 'function') showToast('✅ Запазени ' + savedN + ' залога', 'success');
+      }
       document.getElementById('vbPasteInput').value = '';
       document.getElementById('vbParsePreview').innerHTML = '';
       VB_PENDING = [];
       vbLoadLog();
     } else {
-      if (typeof showToast === 'function') showToast('❌ ' + (data && data.error ? data.error : 'Грешка при запис'), 'error');
+      console.error('[vbSaveAllPending] fail', data);
+      var detail = (data && Array.isArray(data.errors) && data.errors.length) ? data.errors.join(' · ') :
+                   (data && data.error) ? data.error : 'непозната грешка';
+      if (typeof showToast === 'function') showToast('❌ Грешка: ' + detail, 'error');
     }
   }).catch(function(e){
+    console.error('[vbSaveAllPending] exception', e);
     if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
   });
 }
