@@ -1923,6 +1923,10 @@ input::placeholder, textarea::placeholder {
         <div class="dash-tile-ic">📨</div><div class="dash-tile-t">Telegram</div>
         <div class="dash-tile-d">Известия при kickoff</div>
       </div>
+      <div class="dash-tile" onclick="navTo('oaModelCard','🔬 OA Модел')">
+        <div class="dash-tile-ic">🔬</div><div class="dash-tile-t">OA Модел</div>
+        <div class="dash-tile-d">Анализ на всички пазари</div>
+      </div>
       <div class="dash-tile" onclick="navTo('pcCompareCard','📐 OA срещу Модел')">
         <div class="dash-tile-ic">📐</div><div class="dash-tile-t">OA vs Модел</div>
         <div class="dash-tile-d">Сравни точността</div>
@@ -3688,6 +3692,38 @@ input::placeholder, textarea::placeholder {
      на модела (Oracle, не localStorage). Тук маркираш реалния резултат
      и системата показва кой е бил по-точен.
      ═══════════════════════════════════════════════════════════════ -->
+<!-- ═══════════════════════════════════════════════════════════════
+     🔬 OA МОДЕЛ — качваш 1 или няколко CSV (probability_export
+     формат) за произволен период, покриващи ВСИЧКИ пазари на OA
+     (1X2, DC, Total/Home/Away Goals линии, BTTS, Corners, HT Result,
+     1H Goals) — пълен анализ на точността/увереността на OA сама за
+     себе си, ранкинг кой пазар е най-силен.
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="card" id="oaModelCard">
+  <div class="chdr" style="cursor:pointer" onclick="toggleOaModel()">
+    🔬 OA Модел
+    <span id="oaModelArrow" style="margin-left:auto;color:var(--dim)">▼</span>
+  </div>
+  <div id="oaModelPanel" style="display:none">
+    <div style="font-size:.62rem;color:var(--dim);margin-bottom:.7rem;line-height:1.5">
+      Качи 1 или няколко <code>probability_export_*.csv</code> файла (за произволен период — 3/6/12 месеца) за всеки пазар, който искаш анализиран. Разпознава пазара автоматично от Outcome колоната и/или името на файла. Показва точност, калибрация и Brier Skill Score за всеки пазар поотделно, ранкирани от най-силен към най-слаб.
+    </div>
+
+    <div id="oaModelDrop" style="border:2px dashed var(--bord);border-radius:9px;padding:1.2rem;text-align:center;margin-bottom:.6rem;cursor:pointer" onclick="document.getElementById('oaModelFileInput').click()">
+      <div style="font-size:1.4rem;margin-bottom:.3rem">📁</div>
+      <div id="oaModelDropText" style="font-size:.68rem;color:var(--dim)">Избери CSV файл(ове) (може няколко наведнъж)</div>
+      <input type="file" id="oaModelFileInput" accept=".csv" multiple style="display:none" onchange="oaModelIngest(this.files)">
+    </div>
+
+    <div id="oaModelFiles" style="font-size:.6rem;color:var(--dim);margin-bottom:.6rem"></div>
+
+    <button class="btn btn-p btn-action" style="width:100%;margin-bottom:.6rem" onclick="oaModelClear()">🗑 Изчисти всичко</button>
+
+    <div id="oaModelSummary"></div>
+    <div id="oaModelLeaderboard"></div>
+  </div>
+</div>
+
 <div class="card" id="pcCompareCard">
   <div class="chdr" style="cursor:pointer" onclick="togglePcCompare()">
     📐 OA срещу Модел
@@ -10720,6 +10756,219 @@ window.pcMarkResult = function(id, field, value) {
     if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
   });
 };
+
+// ═══════════════════════════════════════════════════════════════
+// 🔬 OA МОДЕЛ — цялостен анализ на точността на OA през ВСИЧКИ
+// пазари, за които има собствен модел (1X2, DC, Total/Home/Away
+// Goals линии, BTTS, Corners, HT Result, 1H Goals). Работи изцяло
+// в браузъра (без Oracle) — само за анализ на качени CSV файлове.
+// ═══════════════════════════════════════════════════════════════
+var OA_MODEL_STATE = { files: [], cands: [] };
+
+function toggleOaModel() {
+  var p = document.getElementById('oaModelPanel');
+  var a = document.getElementById('oaModelArrow');
+  if (!p || !a) return;
+  var shown = p.style.display !== 'none';
+  p.style.display = shown ? 'none' : 'block';
+  a.textContent   = shown ? '▶' : '▼';
+}
+
+// ── Разпознава пазара от Outcome колоната и/или името на файла.
+// Гъвкав, patern-based — ако пропусне нещо, кажи ми точната Outcome
+// стойност от файла и ще я добавя изрично. ──
+function oaModelDetectMarket(outcome, filename) {
+  var o = (outcome || '').toLowerCase().trim();
+  var f = (filename || '').toLowerCase();
+  var src = o + ' ' + f;
+
+  if (/^home$/.test(o) || /ft_result_home|ft_home\b/.test(f)) return {key:'ft_home', label:'FT Дом Win'};
+  if (/^away$/.test(o) || /ft_result_away|ft_away\b/.test(f)) return {key:'ft_away', label:'FT Гост Win'};
+  if (/^draw$/.test(o) || /ft_result_draw|ft_draw\b/.test(f)) return {key:'ft_draw', label:'FT Равен'};
+
+  if (/1x\b|home.?or.?draw/.test(src) && !/x2|draw.?or.?away/.test(src)) return {key:'dc_1x', label:'1X (Дом/Равен)'};
+  if (/x2\b|draw.?or.?away/.test(src)) return {key:'dc_x2', label:'X2 (Равен/Гост)'};
+  if (/\b12\b|home.?or.?away/.test(src) && !/1x2/.test(src)) return {key:'dc_12', label:'12 (Дом/Гост)'};
+
+  if (/btts.*yes|^yes$/.test(o) || /btts_yes/.test(f)) return {key:'btts_yes', label:'BTTS Да'};
+  if (/btts.*no|^no$/.test(o) || /btts_no/.test(f)) return {key:'btts_no', label:'BTTS Не'};
+
+  if (/1h.*goal.*yes|first.?half.*goal.*yes/.test(src)) return {key:'1h_goals_yes', label:'1-во п-ме Гол Да'};
+  if (/1h.*goal.*no|first.?half.*goal.*no/.test(src)) return {key:'1h_goals_no', label:'1-во п-ме Гол Не'};
+
+  if (/\bht.*home|half.?time.*home/.test(src)) return {key:'ht_home', label:'HT Дом'};
+  if (/\bht.*draw|half.?time.*draw/.test(src)) return {key:'ht_draw', label:'HT Равен'};
+  if (/\bht.*away|half.?time.*away/.test(src)) return {key:'ht_away', label:'HT Гост'};
+
+  var homeGoalsM = src.match(/home[^0-9]*?(over|under|\+|\-)\s*(\d+\.?\d*)\s*goal/) || src.match(/home.*?(over|under)\s*(\d+\.?\d*)/);
+  if (homeGoalsM) {
+    var dh = /over|\+/.test(homeGoalsM[1]) ? 'over' : 'under';
+    var lh = parseFloat(homeGoalsM[2]);
+    return {key:'home_'+dh+'_'+String(lh).replace('.',''), label:'Дом '+(dh==='over'?'+':'-')+lh+' гола', line:lh, side:'home', dir:dh};
+  }
+  var awayGoalsM = src.match(/away[^0-9]*?(over|under|\+|\-)\s*(\d+\.?\d*)\s*goal/) || src.match(/away.*?(over|under)\s*(\d+\.?\d*)/);
+  if (awayGoalsM) {
+    var da = /over|\+/.test(awayGoalsM[1]) ? 'over' : 'under';
+    var la = parseFloat(awayGoalsM[2]);
+    return {key:'away_'+da+'_'+String(la).replace('.',''), label:'Гост '+(da==='over'?'+':'-')+la+' гола', line:la, side:'away', dir:da};
+  }
+
+  var cornersM = src.match(/corner[^0-9]*?(over|under|\+|\-)\s*(\d+)/);
+  if (cornersM) {
+    var dc = /over|\+/.test(cornersM[1]) ? 'over' : 'under';
+    var lc = parseFloat(cornersM[2]);
+    return {key:'corners_'+dc+'_'+lc, label:(dc==='over'?'+':'-')+lc+' корнера', line:lc, market:'corners', dir:dc};
+  }
+
+  var totalM = src.match(/(over|under|\+|\-)\s*(\d+\.?\d*)\s*goal/) || src.match(/^(over|under)\s*(\d+\.?\d*)$/) || src.match(/total.*?(over|under|\+|\-)\s*(\d+\.?\d*)/);
+  if (totalM) {
+    var dt = /over|\+/.test(totalM[1]) ? 'over' : 'under';
+    var lt = parseFloat(totalM[2]);
+    return {key:'total_'+dt+'_'+String(lt).replace('.',''), label:'Общо '+(dt==='over'?'+':'-')+lt+' гола', line:lt, market:'total', dir:dt};
+  }
+
+  return null;
+}
+
+function oaModelSettle(mkt, c) {
+  if (c.status !== 'FT') return null; // строго 90 мин, без ET/дузпи
+  if (mkt.key === 'ft_home') return c.hg > c.ag ? 1 : 0;
+  if (mkt.key === 'ft_away') return c.ag > c.hg ? 1 : 0;
+  if (mkt.key === 'ft_draw') return c.hg === c.ag ? 1 : 0;
+  if (mkt.key === 'dc_1x') return c.hg >= c.ag ? 1 : 0;
+  if (mkt.key === 'dc_x2') return c.ag >= c.hg ? 1 : 0;
+  if (mkt.key === 'dc_12') return c.hg !== c.ag ? 1 : 0;
+  if (mkt.key === 'btts_yes') return (c.hg > 0 && c.ag > 0) ? 1 : 0;
+  if (mkt.key === 'btts_no') return !(c.hg > 0 && c.ag > 0) ? 1 : 0;
+  if (mkt.key === '1h_goals_yes') return (c.htHome != null && c.htAway != null) ? ((c.htHome + c.htAway) > 0 ? 1 : 0) : null;
+  if (mkt.key === '1h_goals_no') return (c.htHome != null && c.htAway != null) ? ((c.htHome + c.htAway) === 0 ? 1 : 0) : null;
+  if (mkt.key === 'ht_home') return (c.htHome != null && c.htAway != null) ? (c.htHome > c.htAway ? 1 : 0) : null;
+  if (mkt.key === 'ht_draw') return (c.htHome != null && c.htAway != null) ? (c.htHome === c.htAway ? 1 : 0) : null;
+  if (mkt.key === 'ht_away') return (c.htHome != null && c.htAway != null) ? (c.htAway > c.htHome ? 1 : 0) : null;
+  if (mkt.side === 'home') return mkt.dir === 'over' ? (c.hg > mkt.line ? 1 : 0) : (c.hg < mkt.line ? 1 : 0);
+  if (mkt.side === 'away') return mkt.dir === 'over' ? (c.ag > mkt.line ? 1 : 0) : (c.ag < mkt.line ? 1 : 0);
+  if (mkt.market === 'corners') return c.corners == null ? null : (mkt.dir === 'over' ? (c.corners > mkt.line ? 1 : 0) : (c.corners < mkt.line ? 1 : 0));
+  if (mkt.market === 'total') return mkt.dir === 'over' ? ((c.hg + c.ag) > mkt.line ? 1 : 0) : ((c.hg + c.ag) < mkt.line ? 1 : 0);
+  return null;
+}
+
+function oaModelParseHT(htScoreRaw) {
+  if (!htScoreRaw) return { h: null, a: null };
+  var m = String(htScoreRaw).match(/(\d+)\s*-\s*(\d+)/);
+  return m ? { h: parseInt(m[1], 10), a: parseInt(m[2], 10) } : { h: null, a: null };
+}
+
+function oaModelIngest(fileList) {
+  var files = Array.prototype.slice.call(fileList);
+  if (!files.length) return;
+  var pending = files.length;
+  files.forEach(function(file){
+    var reader = new FileReader();
+    reader.onload = function(e){
+      try {
+        var lines = e.target.result.split(/\r?\n/).filter(function(l){ return l.trim(); });
+        if (lines.length < 2) { pending--; return; }
+        var headers = parseCSVLine(lines[0]).map(function(h){ return h.trim(); });
+        var idx = {};
+        headers.forEach(function(h, i){ idx[h] = i; });
+        var n = 0;
+        for (var i = 1; i < lines.length; i++) {
+          var vals = parseCSVLine(lines[i]);
+          var outcome = vals[idx['Outcome']] || '';
+          var mkt = oaModelDetectMarket(outcome, file.name);
+          if (!mkt) continue;
+          var prob = parseFloat(vals[idx['Probability (%)']]);
+          var hg = parseFloat(vals[idx['Home Goals']]);
+          var ag = parseFloat(vals[idx['Away Goals']]);
+          var corners = vals[idx['Corners']] !== undefined ? parseFloat(vals[idx['Corners']]) : null;
+          var ht = oaModelParseHT(vals[idx['HT Score']]);
+          var status = (vals[idx['Status']] || '').trim();
+          if (isNaN(prob) || isNaN(hg) || isNaN(ag)) continue;
+          OA_MODEL_STATE.cands.push({
+            mkt: mkt, prob: prob, hg: hg, ag: ag,
+            corners: (corners != null && !isNaN(corners)) ? corners : null,
+            htHome: ht.h, htAway: ht.a, status: status
+          });
+          n++;
+        }
+        OA_MODEL_STATE.files.push({ name: file.name, n: n });
+      } catch(err) { console.warn('[oaModel] parse fail', file.name, err.message); }
+      pending--;
+      if (pending === 0) { oaModelRenderFiles(); oaModelAnalyze(); document.getElementById('oaModelFileInput').value = ''; }
+    };
+    reader.readAsText(file);
+  });
+}
+
+function oaModelRenderFiles() {
+  var box = document.getElementById('oaModelFiles');
+  if (!box) return;
+  if (!OA_MODEL_STATE.files.length) { box.innerHTML = ''; return; }
+  box.innerHTML = OA_MODEL_STATE.files.map(function(f){
+    return '<div>📄 ' + f.name + ' — ' + f.n + ' разпознати реда</div>';
+  }).join('') + '<div style="margin-top:.3rem;color:var(--acc)">Общо кандидати: ' + OA_MODEL_STATE.cands.length + '</div>';
+}
+
+function oaModelClear() {
+  OA_MODEL_STATE = { files: [], cands: [] };
+  oaModelRenderFiles();
+  document.getElementById('oaModelSummary').innerHTML = '';
+  document.getElementById('oaModelLeaderboard').innerHTML = '';
+}
+
+function oaModelAnalyze() {
+  var sumBox = document.getElementById('oaModelSummary');
+  var lbBox = document.getElementById('oaModelLeaderboard');
+  if (!sumBox || !lbBox) return;
+  if (!OA_MODEL_STATE.cands.length) { lbBox.innerHTML = '<div class="mw-empty">Качи CSV файлове, за да видиш анализа.</div>'; return; }
+
+  var byMarket = {};
+  OA_MODEL_STATE.cands.forEach(function(c){
+    var res = oaModelSettle(c.mkt, c);
+    if (res == null) return;
+    var key = c.mkt.key;
+    if (!byMarket[key]) byMarket[key] = { label: c.mkt.label, n:0, w:0, brierSum:0, predSum:0 };
+    var b = byMarket[key];
+    var p = c.prob / 100;
+    b.n++; b.w += res; b.predSum += c.prob;
+    b.brierSum += Math.pow(p - res, 2);
+  });
+
+  var rows = Object.keys(byMarket).map(function(k){
+    var b = byMarket[k];
+    var winRate = b.w / b.n * 100;
+    var avgPred = b.predSum / b.n;
+    var gap = winRate - avgPred;
+    var brier = b.brierSum / b.n;
+    var baseRate = b.w / b.n;
+    var brierRef = baseRate * (1 - baseRate);
+    var bss = brierRef > 0 ? (1 - brier / brierRef) : 0;
+    return { key:k, label:b.label, n:b.n, winRate:winRate, avgPred:avgPred, gap:gap, brier:brier, bss:bss };
+  }).filter(function(r){ return r.n >= 10; });
+
+  rows.sort(function(a,b){ return b.bss - a.bss; });
+
+  var totalN = OA_MODEL_STATE.cands.length;
+  sumBox.innerHTML =
+    '<div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.25);border-radius:8px;padding:.6rem;margin-bottom:.6rem">' +
+      '<div style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Общо: ' + rows.length + ' пазара анализирани, ' + totalN + ' наблюдения</div>' +
+      (rows.length ? '<div style="font-size:.62rem;margin-top:.3rem">🏆 Най-силен пазар: <b style="color:var(--grn)">' + rows[0].label + '</b> (BSS ' + (rows[0].bss*100).toFixed(1) + '%)</div>' : '') +
+      (rows.length > 1 ? '<div style="font-size:.62rem">⚠ Най-слаб пазар: <b style="color:#ff6b6b">' + rows[rows.length-1].label + '</b> (BSS ' + (rows[rows.length-1].bss*100).toFixed(1) + '%)</div>' : '') +
+    '</div>';
+
+  if (!rows.length) { lbBox.innerHTML = '<div class="mw-empty">Няма пазар с поне 10 наблюдения все още.</div>'; return; }
+
+  lbBox.innerHTML = rows.map(function(r, i){
+    var bssColor = r.bss >= 0.1 ? 'var(--grn)' : r.bss >= 0.02 ? 'var(--yellow)' : '#ff6b6b';
+    return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.55rem;margin-bottom:.4rem">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem">' +
+        '<span style="font-size:.7rem;font-weight:700;color:var(--txt)">#' + (i+1) + ' ' + r.label + '</span>' +
+        '<span style="font-size:.66rem;font-weight:700;color:' + bssColor + '">BSS ' + (r.bss>=0?'+':'') + (r.bss*100).toFixed(1) + '%</span>' +
+      '</div>' +
+      '<div style="font-size:.6rem;color:var(--dim)">n=' + r.n + ' · WR ' + r.winRate.toFixed(1) + '% · прогноза ' + r.avgPred.toFixed(1) + '% · gap ' + (r.gap>=0?'+':'') + r.gap.toFixed(1) + 'пп · Brier ' + r.brier.toFixed(3) + '</div>' +
+    '</div>';
+  }).join('');
+}
 
 function toggleVbTracker() {
   var p = document.getElementById('vbTrackerPanel');
@@ -26767,7 +27016,7 @@ function dismissIOSHint() {
   // Картите които участват в навигацията
   var NAV_CARDS = ['statsPasteCard','statsCard','oddsCard','resCard','addLogCard',
     'backtestCard','xgTestCard','sharpDropCard','arbCalcCard','filterCheckCard','tgAlertCard',
-    'vbTrackerCard','pcCompareCard',
+    'vbTrackerCard','pcCompareCard','oaModelCard',
     'kellyCalcCard','logSection','fxBrowserCard','settingsCard'];
 
   // Маркираме ги с nav-card клас (за CSS скриване)
