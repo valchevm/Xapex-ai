@@ -6231,6 +6231,33 @@ function calculate() {
     CC.pDC_12 = CC.pH + CC.pA;
     CC.pDC_x2 = CC.pD + CC.pA;
 
+    // ✅ OA blend за пазарите без Pinnacle вход — Poisson base срещу OA,
+    // тегло от getOAWeight() (същия механизъм като BTTS/1X2/O25).
+    // Без прието тегло за конкретен пазар → по подразбиране 40%.
+    (function(){
+      var _oaB = (typeof OA_PROBS !== 'undefined') ? OA_PROBS : {};
+      function blendMkt(baseP, oaVal, marketKey) {
+        if (oaVal == null) return baseP;
+        var w = clamp(getOAWeight(marketKey, 40), 0, 100) / 100;
+        return clamp(baseP * (1 - w) + (oaVal / 100) * w, 0.01, 0.99);
+      }
+      CC.pO15 = blendMkt(CC.pO15, _oaB.o15, 'ou15'); CC.pU15 = 1 - CC.pO15;
+      CC.pO35 = blendMkt(CC.pO35, _oaB.o35, 'ou35'); CC.pU35 = 1 - CC.pO35;
+      if (_oaB.o05 != null) { CC.pO05 = blendMkt(1 - poiss(lh+la, 0), _oaB.o05, 'ou05'); CC.pU05 = 1 - CC.pO05; }
+      if (_oaB.o45 != null) {
+        var base45 = 0;
+        for (var hi3=0; hi3<=8; hi3++) for (var ai3=0; ai3<=8; ai3++) { if (hi3+ai3 > 4.5) base45 += poiss(lh,hi3)*poiss(la,ai3); }
+        CC.pO45 = blendMkt(base45, _oaB.o45, 'ou45'); CC.pU45 = 1 - CC.pO45;
+      }
+      CC.pH_o05 = blendMkt(CC.pH_o05, _oaB.h_o05, 'home_ou05'); CC.pH_u05 = 1 - CC.pH_o05;
+      CC.pH_o15 = blendMkt(CC.pH_o15, _oaB.h_o15, 'home_ou15'); CC.pH_u15 = 1 - CC.pH_o15;
+      CC.pA_o05 = blendMkt(CC.pA_o05, _oaB.a_o05, 'away_ou05'); CC.pA_u05 = 1 - CC.pA_o05;
+      CC.pA_o15 = blendMkt(CC.pA_o15, _oaB.a_o15, 'away_ou15'); CC.pA_u15 = 1 - CC.pA_o15;
+      CC.pHT_home = blendMkt(CC.pHT_home, _oaB.ht_home, 'ht_home');
+      CC.pHT_draw = blendMkt(CC.pHT_draw, _oaB.ht_draw, 'ht_draw');
+      CC.pHT_away = blendMkt(CC.pHT_away, _oaB.ht_away, 'ht_away');
+    })();
+
     // Fair odds за всички
     var _ff = function(p){ return (p > 0.001) ? (1/p).toFixed(2) : '—'; };
     CC.fair_o15 = _ff(CC.pO15); CC.fair_u15 = _ff(CC.pU15);
@@ -10729,7 +10756,18 @@ function pcMarketToBlendKey(key) {
   if (key === 'dc_12') return '12';
   if (key === 'btts_yes' || key === 'btts_no') return 'btts';
   if (key === 'total_over_25' || key === 'total_under_25') return 'over';
-  return null;
+  if (key === 'total_over_05' || key === 'total_under_05') return 'ou05';
+  if (key === 'total_over_15' || key === 'total_under_15') return 'ou15';
+  if (key === 'total_over_35' || key === 'total_under_35') return 'ou35';
+  if (key === 'total_over_45' || key === 'total_under_45') return 'ou45';
+  if (key === 'home_over_05' || key === 'home_under_05') return 'home_ou05';
+  if (key === 'home_over_15' || key === 'home_under_15') return 'home_ou15';
+  if (key === 'away_over_05' || key === 'away_under_05') return 'away_ou05';
+  if (key === 'away_over_15' || key === 'away_under_15') return 'away_ou15';
+  if (key === 'ht_home') return 'ht_home';
+  if (key === 'ht_draw') return 'ht_draw';
+  if (key === 'ht_away') return 'ht_away';
+  return null; // корнери, 1H Goals Yes/No — нямат Poisson модел все още, само диагностика
 }
 
 function pcUploadAnalyze() {
@@ -11195,9 +11233,10 @@ function oaModelAnalyze() {
   lbBox.innerHTML = rows.map(function(r, i){
     var bssColor = r.bss >= 0.1 ? 'var(--grn)' : r.bss >= 0.02 ? 'var(--yellow)' : '#ff6b6b';
     var roiColor = r.roi == null ? 'var(--dim)' : r.roi >= 0 ? 'var(--grn)' : '#ff6b6b';
+    var isLive = !!pcMarketToBlendKey(r.key);
     return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.55rem;margin-bottom:.4rem;cursor:pointer" onclick="oaModelToggleDetail(\'' + r.key + '\')">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem">' +
-        '<span style="font-size:.7rem;font-weight:700;color:var(--txt)">#' + (i+1) + ' ' + r.label + '</span>' +
+        '<span style="font-size:.7rem;font-weight:700;color:var(--txt)">#' + (i+1) + ' ' + r.label + (isLive ? ' <span style="font-size:.52rem;color:var(--grn);font-weight:400">●live</span>' : ' <span style="font-size:.52rem;color:var(--dim);font-weight:400">○диагностика</span>') + '</span>' +
         '<span style="font-size:.66rem;font-weight:700;color:' + bssColor + '">BSS ' + (r.bss>=0?'+':'') + (r.bss*100).toFixed(1) + '%</span>' +
       '</div>' +
       '<div style="font-size:.6rem;color:var(--dim)">n=' + r.n + ' · WR ' + r.winRate.toFixed(1) + '% · прогноза ' + r.avgPred.toFixed(1) + '% · gap ' + (r.gap>=0?'+':'') + r.gap.toFixed(1) + 'пп · Brier ' + r.brier.toFixed(3) +
