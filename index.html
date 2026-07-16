@@ -3750,7 +3750,7 @@ input::placeholder, textarea::placeholder {
       </div>
       <div id="pcUploadPanel" style="display:none">
         <div style="font-size:.6rem;color:var(--dim);margin-bottom:.6rem;line-height:1.5">
-          Качи 1 или няколко <code>probability_export_*.csv</code> файла — за големи периоди/много мачове наведнъж. Разпознава bookmaker-а от колоната "Bookmaker" (Bet365, Pinnacle...) и пазара от Outcome/името на файла. OA вероятността се засича по ID (еднаква във всички файлове за същия мач), сравнява се калибрацията ѝ срещу implied вероятността на всеки bookmaker поотделно.
+          Качи файлове с <b>Pinnacle</b> коефициенти (влизат като вход за симулиран Модел — OA blend-нат с Pinnacle implied вероятност, точно както в реалния calculate()) и/или <b>Bet365</b> (само за залагане/ROI, не участва в сравнението). Главното сравнение е <b>OA срещу Модел</b> — Bet365 е чисто за да видиш реален ROI. OA се засича по ID (еднаква във всички файлове за същия мач).
         </div>
         <div style="border:2px dashed var(--bord);border-radius:9px;padding:1rem;text-align:center;margin-bottom:.6rem;cursor:pointer" onclick="document.getElementById('pcUploadFileInput').click()">
           <div style="font-size:1.2rem;margin-bottom:.2rem">📁</div>
@@ -10775,54 +10775,83 @@ function pcUploadAnalyze() {
   if (!box) return;
   if (!PC_UPLOAD_STATE.rows.length) { box.innerHTML = '<div class="mw-empty">Качи CSV файлове, за да видиш сравнението.</div>'; return; }
 
-  // Групираме по пазар
+  // ── Join по (id + пазар) — обединяваме bookmaker файловете за всеки
+  // мач: OA вероятност (еднаква навсякъде) + Pinnacle коефициент (вход
+  // за симулирания Модел) + Bet365 коефициент (чисто за залагане/ROI). ──
+  var joined = {};
+  PC_UPLOAD_STATE.rows.forEach(function(r){
+    var key = r.id + '|' + r.mkt.key;
+    if (!joined[key]) joined[key] = { mkt: r.mkt, oaProb: r.oaProb, hg: r.hg, ag: r.ag, corners: r.corners, htHome: r.htHome, htAway: r.htAway, status: r.status };
+    var bLower = (r.bookmaker || '').toLowerCase();
+    if (bLower.indexOf('pinnacle') !== -1) joined[key].pinOdds = r.odds;
+    else if (bLower.indexOf('bet365') !== -1 || bLower.indexOf('365') !== -1) joined[key].bet365Odds = r.odds;
+  });
+
   var byMarket = {};
-  PC_UPLOAD_STATE.rows.forEach(function(r){ (byMarket[r.mkt.key] = byMarket[r.mkt.key] || {label:r.mkt.label, rows:[]}).rows.push(r); });
+  Object.keys(joined).forEach(function(k){
+    var row = joined[k];
+    (byMarket[row.mkt.key] = byMarket[row.mkt.key] || {label:row.mkt.label, rows:[]}).rows.push(row);
+  });
 
   var html = '';
   Object.keys(byMarket).forEach(function(mktKey){
     var group = byMarket[mktKey];
-    // OA — dedupe по ID (еднаква вероятност през всички bookmaker файлове)
-    var oaSeen = {}; var oaPairs = [];
-    var byBookie = {};
+    var blendKey = pcMarketToBlendKey(mktKey);
+    var overrides = oaLoadWeightOverrides();
+    var existing = blendKey ? overrides[blendKey] : null;
+    var currentWeight = existing ? existing.weight : 40;
+    var w = currentWeight / 100;
+
+    var oaPairs = [], modelPairs = [];
+    var oaROI = 0, oaROIn = 0, modelROI = 0, modelROIn = 0;
+    var withPinnacle = 0;
+
     group.rows.forEach(function(r){
       var res = oaModelSettle(r.mkt, r);
       if (res == null) return;
-      if (!oaSeen[r.id]) { oaSeen[r.id] = true; oaPairs.push([r.oaProb, res]); }
-      var impliedProb = 100 / r.odds;
-      (byBookie[r.bookmaker] = byBookie[r.bookmaker] || []).push([impliedProb, res]);
+      oaPairs.push([r.oaProb, res]);
+
+      // ── Симулиран Модел: OA blend-нат с Pinnacle implied вероятност,
+      // СЪЩАТА формула като в calculate() (blendMkt/основния 1X2 blend). ──
+      var modelProb = r.oaProb;
+      if (r.pinOdds) { modelProb = r.oaProb * w + (100 / r.pinOdds) * (1 - w); withPinnacle++; }
+      modelPairs.push([modelProb, res]);
+
+      if (r.bet365Odds) {
+        if ((r.oaProb/100 * r.bet365Odds - 1) > 0) { oaROI += res ? (r.bet365Odds - 1) : -1; oaROIn++; }
+        if ((modelProb/100 * r.bet365Odds - 1) > 0) { modelROI += res ? (r.bet365Odds - 1) : -1; modelROIn++; }
+      }
     });
 
     var oaStats = pcBrierStats(oaPairs);
-    var bookieStats = Object.keys(byBookie).map(function(b){ return { name:b, stats: pcBrierStats(byBookie[b]) }; });
+    var modelStats = pcBrierStats(modelPairs);
+    if (!oaStats || !modelStats || oaStats.n < 10) return;
 
-    var allStats = [{ name:'OA', stats:oaStats }].concat(bookieStats).filter(function(s){ return s.stats && s.stats.n >= 10; });
-    allStats.sort(function(a,b){ return b.stats.bss - a.stats.bss; });
+    var better = oaStats.bss > modelStats.bss ? 'OA' : (modelStats.bss > oaStats.bss ? 'Модел' : 'Равни');
+    var betterColor = better === 'OA' ? 'var(--pur)' : better === 'Модел' ? 'var(--acc)' : 'var(--dim)';
 
     html += '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.5rem">' +
-      '<div style="font-size:.68rem;font-weight:700;color:var(--acc);margin-bottom:.4rem">' + group.label + '</div>' +
-      allStats.map(function(s, i){
-        var color = s.name === 'OA' ? 'var(--pur)' : 'var(--txt)';
-        var bssColor = s.stats.bss >= 0.05 ? 'var(--grn)' : s.stats.bss >= 0 ? 'var(--yellow)' : '#ff6b6b';
-        return '<div style="display:flex;justify-content:space-between;font-size:.62rem;padding:.2rem 0;border-bottom:1px solid rgba(255,255,255,.05)">' +
-          '<span style="color:' + color + ';font-weight:' + (i===0?'700':'400') + '">' + (i===0?'🏆 ':'') + s.name + ' (n=' + s.stats.n + ')</span>' +
-          '<span style="color:' + bssColor + '">BSS ' + (s.stats.bss>=0?'+':'') + (s.stats.bss*100).toFixed(1) + '% · WR ' + s.stats.winRate.toFixed(1) + '%</span>' +
-        '</div>';
-      }).join('') +
+      '<div style="font-size:.68rem;font-weight:700;color:var(--acc);margin-bottom:.15rem">' + group.label + '</div>' +
+      '<div style="font-size:.56rem;color:var(--dim);margin-bottom:.4rem">n=' + oaStats.n + ' · с Pinnacle вход: ' + withPinnacle + '</div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:.62rem;padding:.2rem 0;border-bottom:1px solid rgba(255,255,255,.05)">' +
+        '<span style="color:var(--pur);font-weight:' + (better==='OA'?'700':'400') + '">' + (better==='OA'?'🏆 ':'') + 'OA</span>' +
+        '<span style="color:' + (oaStats.bss>=0.05?'var(--grn)':oaStats.bss>=0?'var(--yellow)':'#ff6b6b') + '">BSS ' + (oaStats.bss>=0?'+':'') + (oaStats.bss*100).toFixed(1) + '% · WR ' + oaStats.winRate.toFixed(1) + '%</span>' +
+      '</div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:.62rem;padding:.2rem 0">' +
+        '<span style="color:var(--acc);font-weight:' + (better==='Модел'?'700':'400') + '">' + (better==='Модел'?'🏆 ':'') + 'Модел (' + currentWeight + '% OA + ' + (100-currentWeight) + '% Pinnacle)</span>' +
+        '<span style="color:' + (modelStats.bss>=0.05?'var(--grn)':modelStats.bss>=0?'var(--yellow)':'#ff6b6b') + '">BSS ' + (modelStats.bss>=0?'+':'') + (modelStats.bss*100).toFixed(1) + '% · WR ' + modelStats.winRate.toFixed(1) + '%</span>' +
+      '</div>' +
+      (oaROIn > 0 || modelROIn > 0 ? '<div style="font-size:.58rem;color:var(--dim);margin-top:.4rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.05)">💰 ROI при Bet365 коеф. (само value залози): OA ' + (oaROIn?((oaROI/oaROIn*100).toFixed(1)+'% (n='+oaROIn+')'):'—') + ' · Модел ' + (modelROIn?((modelROI/modelROIn*100).toFixed(1)+'% (n='+modelROIn+')'):'—') + '</div>' : '') +
     '</div>';
 
-    // ✅ Действащо предложение за тегло на модела — само за пазари с
-    // реален blend в calculate(). Използва OA BSS-a от ТОЗИ качен файл.
-    var blendKey = pcMarketToBlendKey(mktKey);
-    if (blendKey && oaStats && oaStats.n >= 10) {
-      var overrides = oaLoadWeightOverrides();
-      var existing = overrides[blendKey];
-      var currentWeight = existing ? existing.weight : 40;
+    // ✅ Действащо предложение за тегло — на база реалното сравнение
+    // OA срещу симулирания Модел (не OA срещу гол bookmaker).
+    if (blendKey) {
       var sugg = oaSuggestWeight(oaStats.bss, currentWeight);
       if (sugg.suggested !== currentWeight) {
         html += '<div style="background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:8px;padding:.55rem;margin-bottom:.6rem">' +
-          '<div style="font-size:.65rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">💡 За "' + group.label + '" → пазар "' + blendKey + '" в модела: OA тегло ' + currentWeight + '% → ' + sugg.suggested + '%</div>' +
-          '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem">На база ' + oaStats.n + ' наблюдения от качения файл (OA BSS ' + (oaStats.bss>=0?'+':'') + (oaStats.bss*100).toFixed(1) + '%). При "Приеми" веднага започва да важи в calculate().</div>' +
+          '<div style="font-size:.65rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">💡 "' + group.label + '" → тегло "' + blendKey + '": ' + currentWeight + '% → ' + sugg.suggested + '%</div>' +
+          '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem">На база ' + oaStats.n + ' наблюдения (OA BSS ' + (oaStats.bss>=0?'+':'') + (oaStats.bss*100).toFixed(1) + '% спрямо симулирания Модел). При "Приеми" веднага важи в calculate().</div>' +
           '<div style="display:flex;gap:.4rem">' +
             '<button class="btn btn-p" style="flex:1;font-size:.6rem;padding:6px" onclick="oaAcceptWeightSuggestion(\'' + blendKey + '\',' + sugg.suggested + ');pcUploadAnalyze();">✅ Приеми</button>' +
             '<button class="btn btn-sec" style="flex:1;font-size:.6rem;padding:6px" onclick="oaRejectWeightSuggestion()">❌ Откажи</button>' +
@@ -10834,7 +10863,7 @@ function pcUploadAnalyze() {
     }
   });
 
-  box.innerHTML = html || '<div class="mw-empty">Няма достатъчно данни (нужни поне 10 наблюдения на пазар/източник).</div>';
+  box.innerHTML = html || '<div class="mw-empty">Няма достатъчно данни (нужни поне 10 наблюдения на пазар).</div>';
 }
 
 var PC_ITEMS = [];
