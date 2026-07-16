@@ -3741,6 +3741,27 @@ input::placeholder, textarea::placeholder {
     </div>
     <div id="pcSummaryBox"></div>
     <div id="pcListBox" style="font-size:.62rem;color:var(--dim);margin-top:.6rem">Зареждане...</div>
+
+    <!-- ═══ Bulk CSV: OA срещу Bookmaker(s) (Bet365/Pinnacle/...) ═══ -->
+    <div style="margin-top:1rem;border-top:1px solid var(--bord);padding-top:.7rem">
+      <div style="display:flex;align-items:center;gap:.4rem;cursor:pointer;margin-bottom:.5rem" onclick="togglePcUpload()">
+        <span style="font-size:.68rem;color:var(--acc);font-weight:600">📁 Bulk CSV: OA срещу Bookmaker(и)</span>
+        <span id="pcUploadArrow" style="margin-left:auto;color:var(--dim)">▶</span>
+      </div>
+      <div id="pcUploadPanel" style="display:none">
+        <div style="font-size:.6rem;color:var(--dim);margin-bottom:.6rem;line-height:1.5">
+          Качи 1 или няколко <code>probability_export_*.csv</code> файла — за големи периоди/много мачове наведнъж. Разпознава bookmaker-а от колоната "Bookmaker" (Bet365, Pinnacle...) и пазара от Outcome/името на файла. OA вероятността се засича по ID (еднаква във всички файлове за същия мач), сравнява се калибрацията ѝ срещу implied вероятността на всеки bookmaker поотделно.
+        </div>
+        <div style="border:2px dashed var(--bord);border-radius:9px;padding:1rem;text-align:center;margin-bottom:.6rem;cursor:pointer" onclick="document.getElementById('pcUploadFileInput').click()">
+          <div style="font-size:1.2rem;margin-bottom:.2rem">📁</div>
+          <div style="font-size:.64rem;color:var(--dim)">Избери CSV файл(ове)</div>
+          <input type="file" id="pcUploadFileInput" accept=".csv" multiple style="display:none" onchange="pcUploadIngest(this.files)">
+        </div>
+        <div id="pcUploadFiles" style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem"></div>
+        <button class="btn btn-sec" style="width:100%;margin-bottom:.6rem;font-size:.62rem" onclick="pcUploadClear()">🗑 Изчисти</button>
+        <div id="pcUploadResult"></div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -10605,6 +10626,143 @@ function togglePcCompare() {
   if (!shown) pcLoadAndRender();
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 📁 BULK CSV: OA срещу Bookmaker(и) — качваш големи CSV файлове
+// (произволен период, произволен брой мачове), сравнява OA
+// вероятността (еднаква за мача във всички bookmaker файлове) срещу
+// implied вероятността на всеки bookmaker (Bet365/Pinnacle/...) от
+// Opening Odds колоната. Преизползва market detection/settle логиката
+// от OA Модел (oaModelDetectMarket / oaModelSettle / oaModelParseHT).
+// ═══════════════════════════════════════════════════════════════
+function togglePcUpload() {
+  var p = document.getElementById('pcUploadPanel');
+  var a = document.getElementById('pcUploadArrow');
+  if (!p || !a) return;
+  var shown = p.style.display !== 'none';
+  p.style.display = shown ? 'none' : 'block';
+  a.textContent   = shown ? '▶' : '▼';
+}
+
+var PC_UPLOAD_STATE = { files: [], rows: [] };
+
+function pcUploadIngest(fileList) {
+  var files = Array.prototype.slice.call(fileList);
+  if (!files.length) return;
+  var pending = files.length;
+  files.forEach(function(file){
+    var reader = new FileReader();
+    reader.onload = function(e){
+      try {
+        var lines = e.target.result.split(/\r?\n/).filter(function(l){ return l.trim(); });
+        if (lines.length < 2) { pending--; return; }
+        var headers = parseCSVLine(lines[0]).map(function(h){ return h.trim(); });
+        var idx = {};
+        headers.forEach(function(h, i){ idx[h] = i; });
+        var n = 0;
+        for (var i = 1; i < lines.length; i++) {
+          var vals = parseCSVLine(lines[i]);
+          var outcome = vals[idx['Outcome']] || '';
+          var mkt = oaModelDetectMarket(outcome, file.name);
+          if (!mkt) continue;
+          var oaProb = parseFloat(vals[idx['Probability (%)']]);
+          var hg = parseFloat(vals[idx['Home Goals']]);
+          var ag = parseFloat(vals[idx['Away Goals']]);
+          var corners = vals[idx['Corners']] !== undefined ? parseFloat(vals[idx['Corners']]) : null;
+          var ht = oaModelParseHT(vals[idx['HT Score']]);
+          var status = (vals[idx['Status']] || '').trim();
+          var bookmaker = (vals[idx['Bookmaker']] || 'Bookmaker').trim();
+          var openOdds = parseFloat(vals[idx['Opening Odds']]);
+          var id = vals[idx['ID']];
+          if (isNaN(oaProb) || isNaN(hg) || isNaN(ag) || isNaN(openOdds)) continue;
+          PC_UPLOAD_STATE.rows.push({
+            id: id, mkt: mkt, oaProb: oaProb, bookmaker: bookmaker, odds: openOdds,
+            hg: hg, ag: ag, corners: (corners != null && !isNaN(corners)) ? corners : null,
+            htHome: ht.h, htAway: ht.a, status: status
+          });
+          n++;
+        }
+        PC_UPLOAD_STATE.files.push({ name: file.name, n: n });
+      } catch(err) { console.warn('[pcUpload] parse fail', file.name, err.message); }
+      pending--;
+      if (pending === 0) { pcUploadRenderFiles(); pcUploadAnalyze(); document.getElementById('pcUploadFileInput').value = ''; }
+    };
+    reader.readAsText(file);
+  });
+}
+
+function pcUploadRenderFiles() {
+  var box = document.getElementById('pcUploadFiles');
+  if (!box) return;
+  if (!PC_UPLOAD_STATE.files.length) { box.innerHTML = ''; return; }
+  box.innerHTML = PC_UPLOAD_STATE.files.map(function(f){
+    return '<div>📄 ' + f.name + ' — ' + f.n + ' реда</div>';
+  }).join('') + '<div style="margin-top:.3rem;color:var(--acc)">Общо: ' + PC_UPLOAD_STATE.rows.length + '</div>';
+}
+
+function pcUploadClear() {
+  PC_UPLOAD_STATE = { files: [], rows: [] };
+  pcUploadRenderFiles();
+  document.getElementById('pcUploadResult').innerHTML = '';
+}
+
+function pcBrierStats(pairs) {
+  // pairs: [[predProb0-100, actualResult0/1], ...]
+  if (!pairs.length) return null;
+  var brierSum = 0, winSum = 0;
+  pairs.forEach(function(pr){ var p = pr[0]/100; brierSum += Math.pow(p-pr[1],2); winSum += pr[1]; });
+  var n = pairs.length;
+  var brier = brierSum/n;
+  var baseRate = winSum/n;
+  var brierRef = baseRate*(1-baseRate);
+  var bss = brierRef > 0 ? (1 - brier/brierRef) : 0;
+  return { n:n, winRate:baseRate*100, brier:brier, bss:bss };
+}
+
+function pcUploadAnalyze() {
+  var box = document.getElementById('pcUploadResult');
+  if (!box) return;
+  if (!PC_UPLOAD_STATE.rows.length) { box.innerHTML = '<div class="mw-empty">Качи CSV файлове, за да видиш сравнението.</div>'; return; }
+
+  // Групираме по пазар
+  var byMarket = {};
+  PC_UPLOAD_STATE.rows.forEach(function(r){ (byMarket[r.mkt.key] = byMarket[r.mkt.key] || {label:r.mkt.label, rows:[]}).rows.push(r); });
+
+  var html = '';
+  Object.keys(byMarket).forEach(function(mktKey){
+    var group = byMarket[mktKey];
+    // OA — dedupe по ID (еднаква вероятност през всички bookmaker файлове)
+    var oaSeen = {}; var oaPairs = [];
+    var byBookie = {};
+    group.rows.forEach(function(r){
+      var res = oaModelSettle(r.mkt, r);
+      if (res == null) return;
+      if (!oaSeen[r.id]) { oaSeen[r.id] = true; oaPairs.push([r.oaProb, res]); }
+      var impliedProb = 100 / r.odds;
+      (byBookie[r.bookmaker] = byBookie[r.bookmaker] || []).push([impliedProb, res]);
+    });
+
+    var oaStats = pcBrierStats(oaPairs);
+    var bookieStats = Object.keys(byBookie).map(function(b){ return { name:b, stats: pcBrierStats(byBookie[b]) }; });
+
+    var allStats = [{ name:'OA', stats:oaStats }].concat(bookieStats).filter(function(s){ return s.stats && s.stats.n >= 10; });
+    allStats.sort(function(a,b){ return b.stats.bss - a.stats.bss; });
+
+    html += '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.5rem">' +
+      '<div style="font-size:.68rem;font-weight:700;color:var(--acc);margin-bottom:.4rem">' + group.label + '</div>' +
+      allStats.map(function(s, i){
+        var color = s.name === 'OA' ? 'var(--pur)' : 'var(--txt)';
+        var bssColor = s.stats.bss >= 0.05 ? 'var(--grn)' : s.stats.bss >= 0 ? 'var(--yellow)' : '#ff6b6b';
+        return '<div style="display:flex;justify-content:space-between;font-size:.62rem;padding:.2rem 0;border-bottom:1px solid rgba(255,255,255,.05)">' +
+          '<span style="color:' + color + ';font-weight:' + (i===0?'700':'400') + '">' + (i===0?'🏆 ':'') + s.name + ' (n=' + s.stats.n + ')</span>' +
+          '<span style="color:' + bssColor + '">BSS ' + (s.stats.bss>=0?'+':'') + (s.stats.bss*100).toFixed(1) + '% · WR ' + s.stats.winRate.toFixed(1) + '%</span>' +
+        '</div>';
+      }).join('') +
+    '</div>';
+  });
+
+  box.innerHTML = html || '<div class="mw-empty">Няма достатъчно данни (нужни поне 10 наблюдения на пазар/източник).</div>';
+}
+
 var PC_ITEMS = [];
 
 function pcLoadAndRender() {
@@ -10883,11 +11041,13 @@ function oaModelIngest(fileList) {
           var corners = vals[idx['Corners']] !== undefined ? parseFloat(vals[idx['Corners']]) : null;
           var ht = oaModelParseHT(vals[idx['HT Score']]);
           var status = (vals[idx['Status']] || '').trim();
+          var openOdds = idx['Opening Odds'] !== undefined ? parseFloat(vals[idx['Opening Odds']]) : null;
           if (isNaN(prob) || isNaN(hg) || isNaN(ag)) continue;
           OA_MODEL_STATE.cands.push({
             mkt: mkt, prob: prob, hg: hg, ag: ag,
             corners: (corners != null && !isNaN(corners)) ? corners : null,
-            htHome: ht.h, htAway: ht.a, status: status
+            htHome: ht.h, htAway: ht.a, status: status,
+            odds: (openOdds != null && !isNaN(openOdds)) ? openOdds : null
           });
           n++;
         }
@@ -10927,12 +11087,18 @@ function oaModelAnalyze() {
     var res = oaModelSettle(c.mkt, c);
     if (res == null) return;
     var key = c.mkt.key;
-    if (!byMarket[key]) byMarket[key] = { label: c.mkt.label, n:0, w:0, brierSum:0, predSum:0 };
+    if (!byMarket[key]) byMarket[key] = { label: c.mkt.label, n:0, w:0, brierSum:0, predSum:0, bands:{}, pnlFlat:0, oddsN:0 };
     var b = byMarket[key];
     var p = c.prob / 100;
     b.n++; b.w += res; b.predSum += c.prob;
     b.brierSum += Math.pow(p - res, 2);
+    var band = Math.max(0, Math.min(90, Math.floor(c.prob / 10) * 10));
+    if (!b.bands[band]) b.bands[band] = { n:0, w:0, predSum:0 };
+    b.bands[band].n++; b.bands[band].w += res; b.bands[band].predSum += c.prob;
+    if (c.odds != null) { b.pnlFlat += res ? (c.odds - 1) : -1; b.oddsN++; }
   });
+
+  OA_MODEL_LAST_BYMARKET = byMarket; // за drill-down при клик
 
   var rows = Object.keys(byMarket).map(function(k){
     var b = byMarket[k];
@@ -10943,7 +11109,8 @@ function oaModelAnalyze() {
     var baseRate = b.w / b.n;
     var brierRef = baseRate * (1 - baseRate);
     var bss = brierRef > 0 ? (1 - brier / brierRef) : 0;
-    return { key:k, label:b.label, n:b.n, winRate:winRate, avgPred:avgPred, gap:gap, brier:brier, bss:bss };
+    var roi = b.oddsN > 0 ? (b.pnlFlat / b.oddsN * 100) : null;
+    return { key:k, label:b.label, n:b.n, winRate:winRate, avgPred:avgPred, gap:gap, brier:brier, bss:bss, roi:roi, oddsN:b.oddsN };
   }).filter(function(r){ return r.n >= 10; });
 
   rows.sort(function(a,b){ return b.bss - a.bss; });
@@ -10954,20 +11121,53 @@ function oaModelAnalyze() {
       '<div style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Общо: ' + rows.length + ' пазара анализирани, ' + totalN + ' наблюдения</div>' +
       (rows.length ? '<div style="font-size:.62rem;margin-top:.3rem">🏆 Най-силен пазар: <b style="color:var(--grn)">' + rows[0].label + '</b> (BSS ' + (rows[0].bss*100).toFixed(1) + '%)</div>' : '') +
       (rows.length > 1 ? '<div style="font-size:.62rem">⚠ Най-слаб пазар: <b style="color:#ff6b6b">' + rows[rows.length-1].label + '</b> (BSS ' + (rows[rows.length-1].bss*100).toFixed(1) + '%)</div>' : '') +
+      '<div style="font-size:.58rem;color:var(--dim);margin-top:.3rem">👆 Кликни пазар отдолу за детайлна разбивка по probability bands + flat-bet ROI</div>' +
     '</div>';
 
   if (!rows.length) { lbBox.innerHTML = '<div class="mw-empty">Няма пазар с поне 10 наблюдения все още.</div>'; return; }
 
   lbBox.innerHTML = rows.map(function(r, i){
     var bssColor = r.bss >= 0.1 ? 'var(--grn)' : r.bss >= 0.02 ? 'var(--yellow)' : '#ff6b6b';
-    return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.55rem;margin-bottom:.4rem">' +
+    var roiColor = r.roi == null ? 'var(--dim)' : r.roi >= 0 ? 'var(--grn)' : '#ff6b6b';
+    return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.55rem;margin-bottom:.4rem;cursor:pointer" onclick="oaModelToggleDetail(\'' + r.key + '\')">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem">' +
         '<span style="font-size:.7rem;font-weight:700;color:var(--txt)">#' + (i+1) + ' ' + r.label + '</span>' +
         '<span style="font-size:.66rem;font-weight:700;color:' + bssColor + '">BSS ' + (r.bss>=0?'+':'') + (r.bss*100).toFixed(1) + '%</span>' +
       '</div>' +
-      '<div style="font-size:.6rem;color:var(--dim)">n=' + r.n + ' · WR ' + r.winRate.toFixed(1) + '% · прогноза ' + r.avgPred.toFixed(1) + '% · gap ' + (r.gap>=0?'+':'') + r.gap.toFixed(1) + 'пп · Brier ' + r.brier.toFixed(3) + '</div>' +
+      '<div style="font-size:.6rem;color:var(--dim)">n=' + r.n + ' · WR ' + r.winRate.toFixed(1) + '% · прогноза ' + r.avgPred.toFixed(1) + '% · gap ' + (r.gap>=0?'+':'') + r.gap.toFixed(1) + 'пп · Brier ' + r.brier.toFixed(3) +
+        (r.roi != null ? ' · <span style="color:' + roiColor + '">flat ROI ' + (r.roi>=0?'+':'') + r.roi.toFixed(1) + '% (n=' + r.oddsN + ')</span>' : '') +
+      '</div>' +
+      '<div id="oaModelDetail_' + r.key + '" style="display:none;margin-top:.4rem;padding-top:.4rem;border-top:1px solid rgba(255,255,255,.06)"></div>' +
     '</div>';
   }).join('');
+}
+
+var OA_MODEL_LAST_BYMARKET = {};
+
+function oaModelToggleDetail(key) {
+  var box = document.getElementById('oaModelDetail_' + key);
+  if (!box) return;
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  var b = OA_MODEL_LAST_BYMARKET[key];
+  if (!b) return;
+  var bandRows = Object.keys(b.bands).map(Number).sort(function(a,b){ return a-b; }).map(function(band){
+    var d = b.bands[band];
+    var pred = d.predSum / d.n;
+    var actual = d.w / d.n * 100;
+    var gap = actual - pred;
+    var gapColor = Math.abs(gap) <= 3 ? 'var(--grn)' : Math.abs(gap) <= 6 ? 'var(--yellow)' : '#ff6b6b';
+    return '<div style="display:grid;grid-template-columns:1.1fr .6fr 1fr 1.2fr;gap:.3rem;font-size:.58rem;padding:.2rem 0;border-bottom:1px solid rgba(255,255,255,.04)">' +
+      '<span>' + band + '-' + (band+10) + '%</span>' +
+      '<span style="color:var(--dim)">n=' + d.n + '</span>' +
+      '<span>прогн. ' + pred.toFixed(1) + '%</span>' +
+      '<span style="color:' + gapColor + '">реал. ' + actual.toFixed(1) + '% (' + (gap>=0?'+':'') + gap.toFixed(1) + ')</span>' +
+    '</div>';
+  }).join('');
+  box.innerHTML =
+    '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.3rem">Калибрация по probability bands:</div>' +
+    bandRows +
+    (b.oddsN > 0 ? '<div style="font-size:.6rem;margin-top:.4rem;color:var(--acc)">💰 Flat-bet PnL: ' + (b.pnlFlat>=0?'+':'') + b.pnlFlat.toFixed(1) + 'u през ' + b.oddsN + ' залога (при Opening Odds)</div>' : '');
+  box.style.display = 'block';
 }
 
 function toggleVbTracker() {
