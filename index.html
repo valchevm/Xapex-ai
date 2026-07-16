@@ -10718,6 +10718,20 @@ function pcBrierStats(pairs) {
   return { n:n, winRate:baseRate*100, brier:brier, bss:bss };
 }
 
+// ── Маха market key (от oaModelDetectMarket) към blend key (getOAWeight) ──
+// Само тези пазари имат реален blend в calculate() — за останалите
+// (голови линии различни от 2.5, корнери, HT пазари) анализът е
+// диагностичен, без бутон за прилагане (няма съответен blend).
+function pcMarketToBlendKey(key) {
+  if (key === 'ft_home' || key === 'ft_away' || key === 'ft_draw') return 'ft1x2';
+  if (key === 'dc_1x') return '1x';
+  if (key === 'dc_x2') return 'x2';
+  if (key === 'dc_12') return '12';
+  if (key === 'btts_yes' || key === 'btts_no') return 'btts';
+  if (key === 'total_over_25' || key === 'total_under_25') return 'over';
+  return null;
+}
+
 function pcUploadAnalyze() {
   var box = document.getElementById('pcUploadResult');
   if (!box) return;
@@ -10758,6 +10772,28 @@ function pcUploadAnalyze() {
         '</div>';
       }).join('') +
     '</div>';
+
+    // ✅ Действащо предложение за тегло на модела — само за пазари с
+    // реален blend в calculate(). Използва OA BSS-a от ТОЗИ качен файл.
+    var blendKey = pcMarketToBlendKey(mktKey);
+    if (blendKey && oaStats && oaStats.n >= 10) {
+      var overrides = oaLoadWeightOverrides();
+      var existing = overrides[blendKey];
+      var currentWeight = existing ? existing.weight : 40;
+      var sugg = oaSuggestWeight(oaStats.bss, currentWeight);
+      if (sugg.suggested !== currentWeight) {
+        html += '<div style="background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:8px;padding:.55rem;margin-bottom:.6rem">' +
+          '<div style="font-size:.65rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">💡 За "' + group.label + '" → пазар "' + blendKey + '" в модела: OA тегло ' + currentWeight + '% → ' + sugg.suggested + '%</div>' +
+          '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem">На база ' + oaStats.n + ' наблюдения от качения файл (OA BSS ' + (oaStats.bss>=0?'+':'') + (oaStats.bss*100).toFixed(1) + '%). При "Приеми" веднага започва да важи в calculate().</div>' +
+          '<div style="display:flex;gap:.4rem">' +
+            '<button class="btn btn-p" style="flex:1;font-size:.6rem;padding:6px" onclick="oaAcceptWeightSuggestion(\'' + blendKey + '\',' + sugg.suggested + ');pcUploadAnalyze();">✅ Приеми</button>' +
+            '<button class="btn btn-sec" style="flex:1;font-size:.6rem;padding:6px" onclick="oaRejectWeightSuggestion()">❌ Откажи</button>' +
+          '</div>' +
+        '</div>';
+      } else {
+        html += '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.6rem">Тегло за "' + blendKey + '": ' + currentWeight + '% — вече отговаря на предложението от тези данни.</div>';
+      }
+    }
   });
 
   box.innerHTML = html || '<div class="mw-empty">Няма достатъчно данни (нужни поне 10 наблюдения на пазар/източник).</div>';
@@ -10805,24 +10841,29 @@ function pcRender() {
 
   // ── Аз събирам всички Brier точки (от кой да е пазар с маркиран резултат),
   // разделени по пазар, за детайлно сравнение + общ агрегат. ──
-  var buckets = { '1X2': {oa:[], model:[]}, 'BTTS': {oa:[], model:[]}, 'O/U 2.5': {oa:[], model:[]} };
+  var buckets = { '1X2': {oa:[], model:[], oaWin:0, n:0}, 'BTTS': {oa:[], model:[], oaWin:0, n:0}, 'O/U 2.5': {oa:[], model:[], oaWin:0, n:0} };
   var withAnyResult = PC_ITEMS.filter(function(it){ return it.actual_result || it.actual_btts || it.actual_ou25; });
   var sample = withAnyResult.slice(0, lastN);
 
   sample.forEach(function(it){
     if (it.actual_result) {
-      buckets['1X2'].oa.push(pcBrier1X2(pcOutcomeProbs(it,'oa'), it.actual_result));
+      var oaP1x2 = pcOutcomeProbs(it,'oa');
+      buckets['1X2'].oa.push(pcBrier1X2(oaP1x2, it.actual_result));
       buckets['1X2'].model.push(pcBrier1X2(pcOutcomeProbs(it,'model'), it.actual_result));
+      var oaPredicted1x2 = it.actual_result === 'H' ? (oaP1x2.H||0)/100 : it.actual_result === 'D' ? (oaP1x2.D||0)/100 : (oaP1x2.A||0)/100;
+      buckets['1X2'].oaWin += 1; buckets['1X2'].n += 1; // всеки маркиран мач е точно 1 "събитие" за base rate цели (H/D/A трипосочно — base rate се смята различно, виж bssMulti по-долу)
     }
     if (it.actual_btts) {
       var yesB = it.actual_btts === 'Y';
       buckets['BTTS'].oa.push(pcBrierBinary(it.oa_prob_btts, yesB));
       buckets['BTTS'].model.push(pcBrierBinary(it.model_prob_btts, yesB));
+      buckets['BTTS'].oaWin += yesB ? 1 : 0; buckets['BTTS'].n += 1;
     }
     if (it.actual_ou25) {
       var overB = it.actual_ou25 === 'O';
       buckets['O/U 2.5'].oa.push(pcBrierBinary(it.oa_prob_over, overB));
       buckets['O/U 2.5'].model.push(pcBrierBinary(it.model_prob_over, overB));
+      buckets['O/U 2.5'].oaWin += overB ? 1 : 0; buckets['O/U 2.5'].n += 1;
     }
   });
 
@@ -10840,6 +10881,31 @@ function pcRender() {
     var better = aggOA < aggModel ? 'OA' : (aggModel < aggOA ? 'Модел' : 'Равни');
     var betterColor = better === 'OA' ? 'var(--pur)' : better === 'Модел' ? 'var(--acc)' : 'var(--dim)';
 
+    var MARKET_TO_BLEND = { '1X2':'ft1x2', 'BTTS':'btts', 'O/U 2.5':'over' };
+    var suggestHtml = rows.map(function(r){
+      if (r.n < 10) return '';
+      var blendKey = MARKET_TO_BLEND[r.market];
+      if (!blendKey) return '';
+      var overrides = oaLoadWeightOverrides();
+      var existing = overrides[blendKey];
+      var currentWeight = existing ? existing.weight : 40;
+      // ✅ Директна разлика в Brier (работи еднакво добре за binary
+      // пазари И за 3-класовия 1X2, за разлика от формалния BSS,
+      // който изисква binary base rate).
+      var diff = r.avgModel - r.avgOA; // >0 = OA по-точен от текущия blend
+      var SCALE = 150;
+      var suggested = Math.round(Math.max(15, Math.min(65, currentWeight + diff * SCALE)));
+      if (suggested === currentWeight) return '';
+      return '<div style="background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:8px;padding:.55rem;margin-bottom:.5rem">' +
+        '<div style="font-size:.64rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">💡 ' + r.market + ' ("' + blendKey + '" в модела): OA тегло ' + currentWeight + '% → ' + suggested + '%</div>' +
+        '<div style="font-size:.57rem;color:var(--dim);margin-bottom:.5rem">На база ' + r.n + ' реални срещи от Fixtures workspace-а. При "Приеми" веднага важи в calculate().</div>' +
+        '<div style="display:flex;gap:.4rem">' +
+          '<button class="btn btn-p" style="flex:1;font-size:.58rem;padding:6px" onclick="oaAcceptWeightSuggestion(\'' + blendKey + '\',' + suggested + ');pcRender();">✅ Приеми</button>' +
+          '<button class="btn btn-sec" style="flex:1;font-size:.58rem;padding:6px" onclick="oaRejectWeightSuggestion()">❌ Откажи</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+
     sumBox.innerHTML =
       '<div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.25);border-radius:8px;padding:.6rem;margin-bottom:.6rem">' +
         '<div style="font-size:.66rem;color:var(--acc);font-weight:600;margin-bottom:.4rem">📊 Сравнение (последни ' + sample.length + ' с маркиран резултат)</div>' +
@@ -10850,7 +10916,7 @@ function pcRender() {
           '</div>';
         }).join('') +
         '<div style="font-size:.68rem;font-weight:700;color:' + betterColor + ';margin-top:.4rem;padding-top:.4rem;border-top:1px solid rgba(255,255,255,.08)">🏆 Общо по-точен: ' + better + ' (общ Brier OA ' + aggOA.toFixed(3) + ' · Модел ' + aggModel.toFixed(3) + ')</div>' +
-      '</div>';
+      '</div>' + suggestHtml;
   } else {
     sumBox.innerHTML = '<div style="font-size:.62rem;color:var(--dim);padding:.3rem 0">Няма мачове с маркиран резултат още — маркирай ги в списъка отдолу.</div>';
   }
