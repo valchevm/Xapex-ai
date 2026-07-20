@@ -3750,7 +3750,7 @@ input::placeholder, textarea::placeholder {
       </div>
       <div id="pcUploadPanel" style="display:none">
         <div style="font-size:.6rem;color:var(--dim);margin-bottom:.6rem;line-height:1.5">
-          Качи файлове с <b>Pinnacle</b> коефициенти (влизат като вход за симулиран Модел — OA blend-нат с Pinnacle implied вероятност, точно както в реалния calculate()) и/или <b>Bet365</b> (само за залагане/ROI, не участва в сравнението). Главното сравнение е <b>OA срещу Модел</b> — Bet365 е чисто за да видиш реален ROI. OA се засича по ID (еднаква във всички файлове за същия мач).
+          Качи файлове с <b>Pinnacle</b> коефициенти (влизат като вход за симулиран Модел — OA blend-нат с Pinnacle implied вероятност от <b>Closing Odds</b> — последната цена преди началото, съответства на реалния момент на залагане) и/или <b>Bet365</b> (само за залагане/ROI, не участва в сравнението). Главното сравнение е <b>OA срещу Модел</b> — Bet365 е чисто за да видиш реален ROI. OA се засича по ID (еднаква във всички файлове за същия мач).
         </div>
         <div style="border:2px dashed var(--bord);border-radius:9px;padding:1rem;text-align:center;margin-bottom:.6rem;cursor:pointer" onclick="document.getElementById('pcUploadFileInput').click()">
           <div style="font-size:1.2rem;margin-bottom:.2rem">📁</div>
@@ -10658,7 +10658,8 @@ function togglePcCompare() {
 // (произволен период, произволен брой мачове), сравнява OA
 // вероятността (еднаква за мача във всички bookmaker файлове) срещу
 // implied вероятността на всеки bookmaker (Bet365/Pinnacle/...) от
-// Opening Odds колоната. Преизползва market detection/settle логиката
+// Closing Odds колоната (последна цена преди началото — реалният момент
+// на залагане). Преизползва market detection/settle логиката
 // от OA Модел (oaModelDetectMarket / oaModelSettle / oaModelParseHT).
 // ═══════════════════════════════════════════════════════════════
 function togglePcUpload() {
@@ -10698,11 +10699,14 @@ function pcUploadIngest(fileList) {
           var ht = oaModelParseHT(vals[idx['HT Score']]);
           var status = (vals[idx['Status']] || '').trim();
           var bookmaker = (vals[idx['Bookmaker']] || 'Bookmaker').trim();
-          var openOdds = parseFloat(vals[idx['Opening Odds']]);
+          // ✅ Closing Odds — последната цена преди началото, съответства
+          // на реалния момент на залагане (не Opening — виж бележката в
+          // pcUploadAnalyze за защо).
+          var closeOdds = parseFloat(vals[idx['Closing Odds']]);
           var id = vals[idx['ID']];
-          if (isNaN(oaProb) || isNaN(hg) || isNaN(ag) || isNaN(openOdds)) continue;
+          if (isNaN(oaProb) || isNaN(hg) || isNaN(ag) || isNaN(closeOdds)) continue;
           PC_UPLOAD_STATE.rows.push({
-            id: id, mkt: mkt, oaProb: oaProb, bookmaker: bookmaker, odds: openOdds,
+            id: id, mkt: mkt, oaProb: oaProb, bookmaker: bookmaker, odds: closeOdds,
             hg: hg, ag: ag, corners: (corners != null && !isNaN(corners)) ? corners : null,
             htHome: ht.h, htAway: ht.a, status: status
           });
@@ -11228,13 +11232,14 @@ function oaModelIngest(fileList) {
           var corners = vals[idx['Corners']] !== undefined ? parseFloat(vals[idx['Corners']]) : null;
           var ht = oaModelParseHT(vals[idx['HT Score']]);
           var status = (vals[idx['Status']] || '').trim();
-          var openOdds = idx['Opening Odds'] !== undefined ? parseFloat(vals[idx['Opening Odds']]) : null;
+          // ✅ Closing Odds — последната цена преди началото на мача.
+          var closeOdds = idx['Closing Odds'] !== undefined ? parseFloat(vals[idx['Closing Odds']]) : null;
           if (isNaN(prob) || isNaN(hg) || isNaN(ag)) continue;
           OA_MODEL_STATE.cands.push({
             mkt: mkt, prob: prob, hg: hg, ag: ag,
             corners: (corners != null && !isNaN(corners)) ? corners : null,
             htHome: ht.h, htAway: ht.a, status: status,
-            odds: (openOdds != null && !isNaN(openOdds)) ? openOdds : null
+            odds: (closeOdds != null && !isNaN(closeOdds)) ? closeOdds : null
           });
           n++;
         }
@@ -11345,7 +11350,7 @@ function oaModelAnalyze() {
       '<div style="font-size:.6rem;color:' + verdict.color + ';margin-bottom:.35rem">📝 ' + verdict.txt + '</div>' +
       '<div style="font-size:.58rem;color:var(--dim);line-height:1.6">' +
         '📌 На ' + r.n + ' мача: OA казва средно <b style="color:var(--txt)">' + r.avgPred.toFixed(1) + '%</b> шанс, реално се случва <b style="color:var(--txt)">' + r.winRate.toFixed(1) + '%</b> от времето (разлика ' + (r.gap>=0?'+':'') + r.gap.toFixed(1) + ' пр.п.)<br>' +
-        '💰 Ако залагаш на <b>всеки</b> сигнал (Opening Odds): <b style="color:' + (r.roiFlat>=0?'var(--grn)':'#ff6b6b') + '">' + (r.roiFlat!=null?((r.roiFlat>=0?'+':'')+r.roiFlat.toFixed(1)+'% ROI ('+(r.pnlFlat>=0?'+':'')+r.pnlFlat.toFixed(0)+'u през '+r.oddsN+' залога)'):'няма коефициенти в данните') + '</b><br>' +
+        '💰 Ако залагаш на <b>всеки</b> сигнал (Closing Odds): <b style="color:' + (r.roiFlat>=0?'var(--grn)':'#ff6b6b') + '">' + (r.roiFlat!=null?((r.roiFlat>=0?'+':'')+r.roiFlat.toFixed(1)+'% ROI ('+(r.pnlFlat>=0?'+':'')+r.pnlFlat.toFixed(0)+'u през '+r.oddsN+' залога)'):'няма коефициенти в данните') + '</b><br>' +
         (r.valueN ? '🎯 Ако залагаш <b>само</b> когато OA показва value (edge>0): <b style="color:' + (r.roiValue>=0?'var(--grn)':'#ff6b6b') + '">' + (r.roiValue>=0?'+':'') + r.roiValue.toFixed(1) + '% ROI (' + (r.pnlValue>=0?'+':'') + r.pnlValue.toFixed(0) + 'u през ' + r.valueN + ' залога)</b>' : '') +
       '</div>' +
       '<div style="font-size:.55rem;color:var(--dim);margin-top:.35rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.04)">Brier ' + r.brier.toFixed(3) + ' · 👆 кликни за разбивка по probability bands</div>' +
@@ -11407,7 +11412,7 @@ function oaModelToggleDetail(key) {
     '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.5rem;line-height:1.5">📊 Разбивка по вероятностни диапазони — за всеки виждаш: колко пъти OA е давал тази прогноза, каква е била реалната успеваемост, и какъв резултат би имал ако беше заложил (flat = на всеки сигнал, value = само когато коефициентът дава edge).</div>' +
     findingHtml +
     bandRows +
-    (b.oddsN > 0 ? '<div style="font-size:.62rem;margin-top:.5rem;padding-top:.4rem;border-top:1px solid rgba(255,255,255,.06);color:var(--acc)">💰 Общо Flat-bet: ' + (b.pnlFlat>=0?'+':'') + b.pnlFlat.toFixed(0) + 'u през ' + b.oddsN + ' залога (Opening Odds)' +
+    (b.oddsN > 0 ? '<div style="font-size:.62rem;margin-top:.5rem;padding-top:.4rem;border-top:1px solid rgba(255,255,255,.06);color:var(--acc)">💰 Общо Flat-bet: ' + (b.pnlFlat>=0?'+':'') + b.pnlFlat.toFixed(0) + 'u през ' + b.oddsN + ' залога (Closing Odds)' +
       (b.valueN ? '<br>🎯 Общо Value-bet (edge>0): ' + (b.pnlValue>=0?'+':'') + b.pnlValue.toFixed(0) + 'u през ' + b.valueN + ' залога' : '') + '</div>' : '');
   box.style.display = 'block';
 }
