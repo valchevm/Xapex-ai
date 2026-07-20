@@ -8658,24 +8658,66 @@ function btRecompute() {
 // резултат (БЕЗ продължения/дузпи) за текущо заредения в Backtester-а
 // пазар. Генерира предложение за корекция на OA теглото в blend-а —
 // НЕ пипа живия calculate() автоматично. Потребителят изрично приема
-// или отказва; прието тегло се пази само локално (localStorage) за
-// бъдещо ръчно прилагане, не влияе на текущите изчисления.
+// или отказва.
+//
+// ✅ Теглата се пазят в Oracle (xgpro_oa_weight_overrides) — важат на
+// всяко устройство, не само локално. localStorage остава като бърз
+// кеш/fallback, за да може oaLoadWeightOverrides() да си остане
+// СИНХРОННА (calculate() я вика в hot path, не може да чака fetch).
+// При зареждане на страницата дърпаме от Oracle и презаписваме кеша.
 // ═══════════════════════════════════════════════════════════════
 var OA_WEIGHT_STORE_KEY = 'xgpro_oa_weight_overrides_v1';
+var OA_WEIGHT_CACHE = null; // populate-ва се синхронно от localStorage, после async от Oracle
 
 function oaLoadWeightOverrides() {
-  try { return JSON.parse(localStorage.getItem(OA_WEIGHT_STORE_KEY) || '{}'); }
-  catch(e) { return {}; }
+  if (OA_WEIGHT_CACHE) return OA_WEIGHT_CACHE;
+  try { OA_WEIGHT_CACHE = JSON.parse(localStorage.getItem(OA_WEIGHT_STORE_KEY) || '{}'); }
+  catch(e) { OA_WEIGHT_CACHE = {}; }
+  return OA_WEIGHT_CACHE;
 }
 function oaSaveWeightOverride(market, weight) {
   var o = oaLoadWeightOverrides();
   o[market] = { weight: weight, acceptedAt: new Date().toISOString() };
+  OA_WEIGHT_CACHE = o;
   try { localStorage.setItem(OA_WEIGHT_STORE_KEY, JSON.stringify(o)); } catch(e){}
+  // ── Async push към Oracle — не блокираме UI, друго устройство ще
+  // го вземе при следващото си зареждане. ──
+  if (typeof fetch === 'function') {
+    fetch('/api/oa-weight-overrides', {
+      method: 'PUT', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ market_key: market, weight: weight })
+    }).catch(function(e){ console.warn('[oaWeight] Oracle sync failed:', e.message); });
+  }
 }
 function oaClearWeightOverride(market) {
   var o = oaLoadWeightOverrides();
   delete o[market];
+  OA_WEIGHT_CACHE = o;
   try { localStorage.setItem(OA_WEIGHT_STORE_KEY, JSON.stringify(o)); } catch(e){}
+  if (typeof fetch === 'function') {
+    fetch('/api/oa-weight-overrides?market_key=' + encodeURIComponent(market), { method: 'DELETE' })
+      .catch(function(e){ console.warn('[oaWeight] Oracle delete failed:', e.message); });
+  }
+}
+
+// ── Извиква се веднъж при зареждане на приложението — дърпа
+// последната калибрация от Oracle (може да идва от друго устройство)
+// и презаписва локалния кеш, за да е винаги най-новата версия. ──
+function oaSyncWeightOverridesFromOracle() {
+  if (typeof fetch !== 'function') return;
+  fetch('/api/oa-weight-overrides').then(function(r){ return r.json(); }).then(function(data){
+    if (!data || !data.ok || !Array.isArray(data.items)) return;
+    var o = {};
+    data.items.forEach(function(it){
+      if (it.market_key) o[it.market_key] = { weight: it.weight, acceptedAt: it.updated_at || it.created_at };
+    });
+    OA_WEIGHT_CACHE = o;
+    try { localStorage.setItem(OA_WEIGHT_STORE_KEY, JSON.stringify(o)); } catch(e){}
+    console.log('[oaWeight] синхронизирано от Oracle:', Object.keys(o).length, 'пазара');
+  }).catch(function(e){ console.warn('[oaWeight] Oracle зареждане неуспешно:', e.message); });
+}
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', oaSyncWeightOverridesFromOracle);
 }
 
 // Изчислява калибрация по 10% probability bands, само за status==='FT'
@@ -10774,6 +10816,16 @@ function pcMarketToBlendKey(key) {
   return null; // корнери, 1H Goals Yes/No — нямат Poisson модел все още, само диагностика
 }
 
+function pcSuccessRate(pairs) {
+  if (!pairs.length) return null;
+  var correct = 0;
+  pairs.forEach(function(pr){
+    var predict = pr[0] >= 50 ? 1 : 0;
+    if (predict === pr[1]) correct++;
+  });
+  return { n: pairs.length, rate: correct / pairs.length * 100 };
+}
+
 function pcUploadAnalyze() {
   var box = document.getElementById('pcUploadResult');
   if (!box) return;
@@ -10833,6 +10885,41 @@ function pcUploadAnalyze() {
 
     var better = oaStats.bss > modelStats.bss ? 'OA' : (modelStats.bss > oaStats.bss ? 'Модел' : 'Равни');
     var betterColor = better === 'OA' ? 'var(--pur)' : better === 'Модел' ? 'var(--acc)' : 'var(--dim)';
+    var sugg = blendKey ? oaSuggestWeight(oaStats.bss, currentWeight) : null;
+
+    // ═══ 4-те варианта успеваемост: OA(преди) срещу Модел с НОВОТО
+    // предложено тегло(след) × (само value залози / абсолютно всички) ═══
+    var wNew = sugg ? sugg.suggested / 100 : w;
+    var oaAllPairs = oaPairs, modelNewPairs = [];
+    var oaValuePairs = [], modelValuePairs = [];
+    group.rows.forEach(function(r){
+      var res = oaModelSettle(r.mkt, r);
+      if (res == null) return;
+      var modelProbNew = r.oaProb;
+      if (r.pinOdds) modelProbNew = r.oaProb * wNew + (100 / r.pinOdds) * (1 - wNew);
+      modelNewPairs.push([modelProbNew, res]);
+      if (r.bet365Odds) {
+        if ((r.oaProb/100 * r.bet365Odds - 1) > 0) oaValuePairs.push([r.oaProb, res]);
+        if ((modelProbNew/100 * r.bet365Odds - 1) > 0) modelValuePairs.push([modelProbNew, res]);
+      }
+    });
+    var srOaAll = pcSuccessRate(oaAllPairs);
+    var srModelAll = pcSuccessRate(modelNewPairs);
+    var srOaValue = pcSuccessRate(oaValuePairs);
+    var srModelValue = pcSuccessRate(modelValuePairs);
+
+    function srRow(label, before, after) {
+      if (!before && !after) return '';
+      var b = before ? before.rate : null, a = after ? after.rate : null;
+      var diff = (b != null && a != null) ? (a - b) : null;
+      var diffColor = diff == null ? 'var(--dim)' : diff >= 0 ? 'var(--grn)' : '#ff6b6b';
+      return '<div style="font-size:.6rem;padding:.2rem 0;border-bottom:1px solid rgba(255,255,255,.04)">' +
+        '<span style="color:var(--dim)">' + label + ':</span> ' +
+        'преди <b>' + (b!=null?b.toFixed(1)+'%':'—') + '</b>' + (before?' (n='+before.n+')':'') +
+        ' → след <b>' + (a!=null?a.toFixed(1)+'%':'—') + '</b>' + (after?' (n='+after.n+')':'') +
+        (diff!=null ? ' <span style="color:'+diffColor+'">(' + (diff>=0?'+':'') + diff.toFixed(1) + 'пп)</span>' : '') +
+      '</div>';
+    }
 
     html += '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.5rem">' +
       '<div style="font-size:.68rem;font-weight:700;color:var(--acc);margin-bottom:.15rem">' + group.label + '</div>' +
@@ -10846,16 +10933,20 @@ function pcUploadAnalyze() {
         '<span style="color:' + (modelStats.bss>=0.05?'var(--grn)':modelStats.bss>=0?'var(--yellow)':'#ff6b6b') + '">BSS ' + (modelStats.bss>=0?'+':'') + (modelStats.bss*100).toFixed(1) + '% · WR ' + modelStats.winRate.toFixed(1) + '%</span>' +
       '</div>' +
       (oaROIn > 0 || modelROIn > 0 ? '<div style="font-size:.58rem;color:var(--dim);margin-top:.4rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.05)">💰 ROI при Bet365 коеф. (само value залози): OA ' + (oaROIn?((oaROI/oaROIn*100).toFixed(1)+'% (n='+oaROIn+')'):'—') + ' · Модел ' + (modelROIn?((modelROI/modelROIn*100).toFixed(1)+'% (n='+modelROIn+')'):'—') + '</div>' : '') +
+      '<div style="margin-top:.5rem;padding-top:.4rem;border-top:1px solid rgba(255,255,255,.05)">' +
+        '<div style="font-size:.58rem;color:var(--acc);margin-bottom:.3rem">🎯 Успеваемост (OA сега → Модел с предложеното ' + (sugg?sugg.suggested:currentWeight) + '% тегло):</div>' +
+        srRow('Само value залози', srOaValue, srModelValue) +
+        srRow('Абсолютно всички срещи', srOaAll, srModelAll) +
+      '</div>' +
     '</div>';
 
     // ✅ Действащо предложение за тегло — на база реалното сравнение
     // OA срещу симулирания Модел (не OA срещу гол bookmaker).
-    if (blendKey) {
-      var sugg = oaSuggestWeight(oaStats.bss, currentWeight);
+    if (blendKey && sugg) {
       if (sugg.suggested !== currentWeight) {
         html += '<div style="background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:8px;padding:.55rem;margin-bottom:.6rem">' +
           '<div style="font-size:.65rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">💡 "' + group.label + '" → тегло "' + blendKey + '": ' + currentWeight + '% → ' + sugg.suggested + '%</div>' +
-          '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem">На база ' + oaStats.n + ' наблюдения (OA BSS ' + (oaStats.bss>=0?'+':'') + (oaStats.bss*100).toFixed(1) + '% спрямо симулирания Модел). При "Приеми" веднага важи в calculate().</div>' +
+          '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem">На база ' + oaStats.n + ' наблюдения (OA BSS ' + (oaStats.bss>=0?'+':'') + (oaStats.bss*100).toFixed(1) + '% спрямо симулирания Модел). При "Приеми" веднага важи в calculate() — и на всяко устройство, на което влезеш.</div>' +
           '<div style="display:flex;gap:.4rem">' +
             '<button class="btn btn-p" style="flex:1;font-size:.6rem;padding:6px" onclick="oaAcceptWeightSuggestion(\'' + blendKey + '\',' + sugg.suggested + ');pcUploadAnalyze();">✅ Приеми</button>' +
             '<button class="btn btn-sec" style="flex:1;font-size:.6rem;padding:6px" onclick="oaRejectWeightSuggestion()">❌ Откажи</button>' +
