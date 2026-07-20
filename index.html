@@ -11220,15 +11220,26 @@ function oaModelAnalyze() {
     var res = oaModelSettle(c.mkt, c);
     if (res == null) return;
     var key = c.mkt.key;
-    if (!byMarket[key]) byMarket[key] = { label: c.mkt.label, n:0, w:0, brierSum:0, predSum:0, bands:{}, pnlFlat:0, oddsN:0 };
+    if (!byMarket[key]) byMarket[key] = { label: c.mkt.label, n:0, w:0, brierSum:0, predSum:0, bands:{}, pnlFlat:0, oddsN:0, pnlValue:0, valueN:0 };
     var b = byMarket[key];
     var p = c.prob / 100;
     b.n++; b.w += res; b.predSum += c.prob;
     b.brierSum += Math.pow(p - res, 2);
     var band = Math.max(0, Math.min(90, Math.floor(c.prob / 10) * 10));
-    if (!b.bands[band]) b.bands[band] = { n:0, w:0, predSum:0 };
-    b.bands[band].n++; b.bands[band].w += res; b.bands[band].predSum += c.prob;
-    if (c.odds != null) { b.pnlFlat += res ? (c.odds - 1) : -1; b.oddsN++; }
+    if (!b.bands[band]) b.bands[band] = { n:0, w:0, predSum:0, brierSum:0, pnlFlat:0, oddsN:0, pnlValue:0, valueN:0 };
+    var bd = b.bands[band];
+    bd.n++; bd.w += res; bd.predSum += c.prob;
+    bd.brierSum += Math.pow(p - res, 2);
+    if (c.odds != null) {
+      b.pnlFlat += res ? (c.odds - 1) : -1; b.oddsN++;
+      bd.pnlFlat += res ? (c.odds - 1) : -1; bd.oddsN++;
+      // ── Value-филтрирано: залагаме само когато OA implied% < коефициента implied% (има edge) ──
+      var edge = (c.prob/100 * c.odds - 1);
+      if (edge > 0) {
+        bd.pnlValue += res ? (c.odds - 1) : -1; bd.valueN++;
+        b.pnlValue += res ? (c.odds - 1) : -1; b.valueN++;
+      }
+    }
   });
 
   OA_MODEL_LAST_BYMARKET = byMarket; // за drill-down при клик
@@ -11242,11 +11253,21 @@ function oaModelAnalyze() {
     var baseRate = b.w / b.n;
     var brierRef = baseRate * (1 - baseRate);
     var bss = brierRef > 0 ? (1 - brier / brierRef) : 0;
-    var roi = b.oddsN > 0 ? (b.pnlFlat / b.oddsN * 100) : null;
-    return { key:k, label:b.label, n:b.n, winRate:winRate, avgPred:avgPred, gap:gap, brier:brier, bss:bss, roi:roi, oddsN:b.oddsN };
+    var roiFlat = b.oddsN > 0 ? (b.pnlFlat / b.oddsN * 100) : null;
+    var roiValue = b.valueN > 0 ? (b.pnlValue / b.valueN * 100) : null;
+    return { key:k, label:b.label, n:b.n, winRate:winRate, avgPred:avgPred, gap:gap, brier:brier, bss:bss,
+      roiFlat:roiFlat, oddsN:b.oddsN, roiValue:roiValue, valueN:b.valueN, pnlFlat:b.pnlFlat, pnlValue:b.pnlValue };
   }).filter(function(r){ return r.n >= 10; });
 
   rows.sort(function(a,b){ return b.bss - a.bss; });
+
+  function bssVerdict(bss) {
+    if (bss >= 0.15) return { txt:'Отлична — вероятностите на OA са много близо до реалността', color:'var(--grn)' };
+    if (bss >= 0.08) return { txt:'Добра — OA познава пазара сравнително точно', color:'var(--grn)' };
+    if (bss >= 0.02) return { txt:'Приемлива — има известна точност, но не силна', color:'var(--yellow)' };
+    if (bss >= -0.02) return { txt:'Слаба — почти колкото случайно гадаене', color:'#ff6b6b' };
+    return { txt:'Много слаба — по-зле от просто "залагай на средното"', color:'#ff6b6b' };
+  }
 
   var totalN = OA_MODEL_STATE.cands.length;
   sumBox.innerHTML =
@@ -11254,23 +11275,26 @@ function oaModelAnalyze() {
       '<div style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Общо: ' + rows.length + ' пазара анализирани, ' + totalN + ' наблюдения</div>' +
       (rows.length ? '<div style="font-size:.62rem;margin-top:.3rem">🏆 Най-силен пазар: <b style="color:var(--grn)">' + rows[0].label + '</b> (BSS ' + (rows[0].bss*100).toFixed(1) + '%)</div>' : '') +
       (rows.length > 1 ? '<div style="font-size:.62rem">⚠ Най-слаб пазар: <b style="color:#ff6b6b">' + rows[rows.length-1].label + '</b> (BSS ' + (rows[rows.length-1].bss*100).toFixed(1) + '%)</div>' : '') +
-      '<div style="font-size:.58rem;color:var(--dim);margin-top:.3rem">👆 Кликни пазар отдолу за детайлна разбивка по probability bands + flat-bet ROI</div>' +
+      '<div style="font-size:.58rem;color:var(--dim);margin-top:.3rem">👆 Кликни пазар отдолу за пълна разбивка: точност по probability bands, flat ROI И value-филтрирано ROI (само залози с edge)</div>' +
     '</div>';
 
   if (!rows.length) { lbBox.innerHTML = '<div class="mw-empty">Няма пазар с поне 10 наблюдения все още.</div>'; return; }
 
   lbBox.innerHTML = rows.map(function(r, i){
-    var bssColor = r.bss >= 0.1 ? 'var(--grn)' : r.bss >= 0.02 ? 'var(--yellow)' : '#ff6b6b';
-    var roiColor = r.roi == null ? 'var(--dim)' : r.roi >= 0 ? 'var(--grn)' : '#ff6b6b';
+    var verdict = bssVerdict(r.bss);
     var isLive = !!pcMarketToBlendKey(r.key);
-    return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.55rem;margin-bottom:.4rem;cursor:pointer" onclick="oaModelToggleDetail(\'' + r.key + '\')">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.25rem">' +
-        '<span style="font-size:.7rem;font-weight:700;color:var(--txt)">#' + (i+1) + ' ' + r.label + (isLive ? ' <span style="font-size:.52rem;color:var(--grn);font-weight:400">●live</span>' : ' <span style="font-size:.52rem;color:var(--dim);font-weight:400">○диагностика</span>') + '</span>' +
-        '<span style="font-size:.66rem;font-weight:700;color:' + bssColor + '">BSS ' + (r.bss>=0?'+':'') + (r.bss*100).toFixed(1) + '%</span>' +
+    return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.4rem;cursor:pointer" onclick="oaModelToggleDetail(\'' + r.key + '\')">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.3rem">' +
+        '<span style="font-size:.72rem;font-weight:700;color:var(--txt)">#' + (i+1) + ' ' + r.label + (isLive ? ' <span style="font-size:.52rem;color:var(--grn);font-weight:400">●live</span>' : ' <span style="font-size:.52rem;color:var(--dim);font-weight:400">○диагностика</span>') + '</span>' +
+        '<span style="font-size:.68rem;font-weight:700;color:' + verdict.color + '">BSS ' + (r.bss>=0?'+':'') + (r.bss*100).toFixed(1) + '%</span>' +
       '</div>' +
-      '<div style="font-size:.6rem;color:var(--dim)">n=' + r.n + ' · WR ' + r.winRate.toFixed(1) + '% · прогноза ' + r.avgPred.toFixed(1) + '% · gap ' + (r.gap>=0?'+':'') + r.gap.toFixed(1) + 'пп · Brier ' + r.brier.toFixed(3) +
-        (r.roi != null ? ' · <span style="color:' + roiColor + '">flat ROI ' + (r.roi>=0?'+':'') + r.roi.toFixed(1) + '% (n=' + r.oddsN + ')</span>' : '') +
+      '<div style="font-size:.6rem;color:' + verdict.color + ';margin-bottom:.35rem">📝 ' + verdict.txt + '</div>' +
+      '<div style="font-size:.58rem;color:var(--dim);line-height:1.6">' +
+        '📌 На ' + r.n + ' мача: OA казва средно <b style="color:var(--txt)">' + r.avgPred.toFixed(1) + '%</b> шанс, реално се случва <b style="color:var(--txt)">' + r.winRate.toFixed(1) + '%</b> от времето (разлика ' + (r.gap>=0?'+':'') + r.gap.toFixed(1) + ' пр.п.)<br>' +
+        '💰 Ако залагаш на <b>всеки</b> сигнал (Opening Odds): <b style="color:' + (r.roiFlat>=0?'var(--grn)':'#ff6b6b') + '">' + (r.roiFlat!=null?((r.roiFlat>=0?'+':'')+r.roiFlat.toFixed(1)+'% ROI ('+(r.pnlFlat>=0?'+':'')+r.pnlFlat.toFixed(0)+'u през '+r.oddsN+' залога)'):'няма коефициенти в данните') + '</b><br>' +
+        (r.valueN ? '🎯 Ако залагаш <b>само</b> когато OA показва value (edge>0): <b style="color:' + (r.roiValue>=0?'var(--grn)':'#ff6b6b') + '">' + (r.roiValue>=0?'+':'') + r.roiValue.toFixed(1) + '% ROI (' + (r.pnlValue>=0?'+':'') + r.pnlValue.toFixed(0) + 'u през ' + r.valueN + ' залога)</b>' : '') +
       '</div>' +
+      '<div style="font-size:.55rem;color:var(--dim);margin-top:.35rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.04)">Brier ' + r.brier.toFixed(3) + ' · 👆 кликни за разбивка по probability bands</div>' +
       '<div id="oaModelDetail_' + r.key + '" style="display:none;margin-top:.4rem;padding-top:.4rem;border-top:1px solid rgba(255,255,255,.06)"></div>' +
     '</div>';
   }).join('');
@@ -11284,23 +11308,53 @@ function oaModelToggleDetail(key) {
   if (box.style.display !== 'none') { box.style.display = 'none'; return; }
   var b = OA_MODEL_LAST_BYMARKET[key];
   if (!b) return;
-  var bandRows = Object.keys(b.bands).map(Number).sort(function(a,b){ return a-b; }).map(function(band){
+
+  var bandKeys = Object.keys(b.bands).map(Number).sort(function(a,b){ return a-b; });
+  var bandData = bandKeys.map(function(band){
     var d = b.bands[band];
     var pred = d.predSum / d.n;
     var actual = d.w / d.n * 100;
     var gap = actual - pred;
-    var gapColor = Math.abs(gap) <= 3 ? 'var(--grn)' : Math.abs(gap) <= 6 ? 'var(--yellow)' : '#ff6b6b';
-    return '<div style="display:grid;grid-template-columns:1.1fr .6fr 1fr 1.2fr;gap:.3rem;font-size:.58rem;padding:.2rem 0;border-bottom:1px solid rgba(255,255,255,.04)">' +
-      '<span>' + band + '-' + (band+10) + '%</span>' +
-      '<span style="color:var(--dim)">n=' + d.n + '</span>' +
-      '<span>прогн. ' + pred.toFixed(1) + '%</span>' +
-      '<span style="color:' + gapColor + '">реал. ' + actual.toFixed(1) + '% (' + (gap>=0?'+':'') + gap.toFixed(1) + ')</span>' +
+    var roiFlat = d.oddsN > 0 ? (d.pnlFlat / d.oddsN * 100) : null;
+    var roiValue = d.valueN > 0 ? (d.pnlValue / d.valueN * 100) : null;
+    return { band:band, n:d.n, pred:pred, actual:actual, gap:gap, roiFlat:roiFlat, oddsN:d.oddsN, roiValue:roiValue, valueN:d.valueN, pnlFlat:d.pnlFlat };
+  });
+
+  // ── Намираме най-добрата и най-лошата зона по flat ROI (за plain-language извод) ──
+  var withRoi = bandData.filter(function(d){ return d.roiFlat != null && d.n >= 15; });
+  var bestZone = withRoi.length ? withRoi.reduce(function(a,b){ return b.roiFlat > a.roiFlat ? b : a; }) : null;
+  var worstZone = withRoi.length ? withRoi.reduce(function(a,b){ return b.roiFlat < a.roiFlat ? b : a; }) : null;
+
+  var bandRows = bandData.map(function(d){
+    var gapColor = Math.abs(d.gap) <= 3 ? 'var(--grn)' : Math.abs(d.gap) <= 6 ? 'var(--yellow)' : '#ff6b6b';
+    var roiFlatColor = d.roiFlat == null ? 'var(--dim)' : d.roiFlat >= 0 ? 'var(--grn)' : '#ff6b6b';
+    var roiValueColor = d.roiValue == null ? 'var(--dim)' : d.roiValue >= 0 ? 'var(--grn)' : '#ff6b6b';
+    return '<div style="background:#070d16;border-radius:6px;padding:.35rem .5rem;margin-bottom:.25rem">' +
+      '<div style="display:flex;justify-content:space-between;font-size:.6rem;margin-bottom:.15rem">' +
+        '<span style="font-weight:700">' + d.band + '-' + (d.band+10) + '%</span>' +
+        '<span style="color:var(--dim)">n=' + d.n + '</span>' +
+      '</div>' +
+      '<div style="font-size:.56rem;color:var(--dim)">Прогноза ' + d.pred.toFixed(1) + '% → реално <span style="color:' + gapColor + '">' + d.actual.toFixed(1) + '% (' + (d.gap>=0?'+':'') + d.gap.toFixed(1) + 'пп)</span></div>' +
+      (d.oddsN ? '<div style="font-size:.56rem;margin-top:.1rem">Flat ROI: <span style="color:' + roiFlatColor + '">' + (d.roiFlat>=0?'+':'') + d.roiFlat.toFixed(1) + '%</span> (n=' + d.oddsN + ')' +
+        (d.valueN ? ' · Value ROI: <span style="color:' + roiValueColor + '">' + (d.roiValue>=0?'+':'') + d.roiValue.toFixed(1) + '%</span> (n=' + d.valueN + ')' : '') + '</div>' : '') +
     '</div>';
   }).join('');
+
+  var findingHtml = '';
+  if (bestZone && worstZone && bestZone.band !== worstZone.band) {
+    findingHtml =
+      '<div style="background:rgba(52,211,153,.06);border:1px solid rgba(52,211,153,.25);border-radius:7px;padding:.5rem;margin-bottom:.5rem">' +
+        '<div style="font-size:.6rem;color:var(--grn)">✅ Най-печеливша зона: <b>' + bestZone.band + '-' + (bestZone.band+10) + '%</b> прогноза → ' + (bestZone.roiFlat>=0?'+':'') + bestZone.roiFlat.toFixed(1) + '% ROI (n=' + bestZone.oddsN + ')</div>' +
+        '<div style="font-size:.6rem;color:#ff6b6b;margin-top:.2rem">⚠ Най-губеща зона: <b>' + worstZone.band + '-' + (worstZone.band+10) + '%</b> прогноза → ' + worstZone.roiFlat.toFixed(1) + '% ROI (n=' + worstZone.oddsN + ')</div>' +
+      '</div>';
+  }
+
   box.innerHTML =
-    '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.3rem">Калибрация по probability bands:</div>' +
+    '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.5rem;line-height:1.5">📊 Разбивка по вероятностни диапазони — за всеки виждаш: колко пъти OA е давал тази прогноза, каква е била реалната успеваемост, и какъв резултат би имал ако беше заложил (flat = на всеки сигнал, value = само когато коефициентът дава edge).</div>' +
+    findingHtml +
     bandRows +
-    (b.oddsN > 0 ? '<div style="font-size:.6rem;margin-top:.4rem;color:var(--acc)">💰 Flat-bet PnL: ' + (b.pnlFlat>=0?'+':'') + b.pnlFlat.toFixed(1) + 'u през ' + b.oddsN + ' залога (при Opening Odds)</div>' : '');
+    (b.oddsN > 0 ? '<div style="font-size:.62rem;margin-top:.5rem;padding-top:.4rem;border-top:1px solid rgba(255,255,255,.06);color:var(--acc)">💰 Общо Flat-bet: ' + (b.pnlFlat>=0?'+':'') + b.pnlFlat.toFixed(0) + 'u през ' + b.oddsN + ' залога (Opening Odds)' +
+      (b.valueN ? '<br>🎯 Общо Value-bet (edge>0): ' + (b.pnlValue>=0?'+':'') + b.pnlValue.toFixed(0) + 'u през ' + b.valueN + ' залога' : '') + '</div>' : '');
   box.style.display = 'block';
 }
 
