@@ -11073,6 +11073,20 @@ function oaModelDetectMarket(outcome, filename) {
   var f = (filename || '').toLowerCase();
   var src = o + ' ' + f;
 
+  // ── Файлове за Дом/Гост голове често имат Outcome БЕЗ home_/away_
+  // представка (напр. просто "over_05"), защото самият ФАЙЛ вече е
+  // ограничен до тази страна — иначе такъв запис погрешно се чете
+  // като Общо голове. Проверяваме името на файла първо. ──
+  var lineM = o.match(/^(over|under)_(\d+)$/);
+  if (lineM && /away[_-]?o\d*[_-]?goals?/.test(f)) {
+    var lv = parseFloat(lineM[2]) / 10;
+    return { key: 'away_' + lineM[1] + '_' + lineM[2], label: 'Гост ' + (lineM[1]==='over'?'+':'-') + lv + ' гола', line: lv, side: 'away', dir: lineM[1] };
+  }
+  if (lineM && /home[_-]?o\d*[_-]?goals?/.test(f)) {
+    var lv2 = parseFloat(lineM[2]) / 10;
+    return { key: 'home_' + lineM[1] + '_' + lineM[2], label: 'Дом ' + (lineM[1]==='over'?'+':'-') + lv2 + ' гола', line: lv2, side: 'home', dir: lineM[1] };
+  }
+
   // ── Точни кодове от OA export-ите (Outcome колоната) — проверяват се
   // ПЪРВИ, преди по-свободните шаблони. "25" = линия 2.5 и т.н. ──
   var EXACT = {
