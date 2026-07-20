@@ -8165,7 +8165,7 @@ var BT_MARKETS = {
     label: '1X2 (FT Result)', sides: ['home','away'],
     settle: function(c){
       var s = c.status;
-      if (['FT','FT_PEN','AET'].indexOf(s) === -1) return null;
+      if (s !== 'FT') return null; // ✅ строго 90 мин — без ET/дузпи
       if (BT_STATE.etDraw && (s === 'FT_PEN' || s === 'AET')) return 0;
       if (c.hg == null || c.ag == null) return null;
       if (c.hg === c.ag) return 0;
@@ -8176,7 +8176,7 @@ var BT_MARKETS = {
     label: 'Over/Under (голове)', sides: ['over'],
     line: 2.5,  // настройваема
     settle: function(c){
-      if (['FT','FT_PEN','AET'].indexOf(c.status) === -1) return null;
+      if (c.status !== 'FT') return null; // ✅ строго 90 мин — без ET/дузпи
       if (c.hg == null || c.ag == null) return null;
       return (c.hg + c.ag) > BT_MARKETS.over.line ? 1 : 0;
     }
@@ -8184,7 +8184,7 @@ var BT_MARKETS = {
   btts: {
     label: 'BTTS (и двата бележат)', sides: ['btts'],
     settle: function(c){
-      if (['FT','FT_PEN','AET'].indexOf(c.status) === -1) return null;
+      if (c.status !== 'FT') return null; // ✅ строго 90 мин — без ET/дузпи
       if (c.hg == null || c.ag == null) return null;
       return (c.hg >= 1 && c.ag >= 1) ? 1 : 0;
     }
@@ -8193,7 +8193,7 @@ var BT_MARKETS = {
     label: 'Корнери (Over)', sides: ['corners'],
     line: 8.5,
     settle: function(c){
-      if (['FT','FT_PEN','AET'].indexOf(c.status) === -1) return null;
+      if (c.status !== 'FT') return null; // ✅ строго 90 мин — без ET/дузпи
       if (c.corners == null) return null;
       return c.corners > BT_MARKETS.corners.line ? 1 : 0;
     }
@@ -8202,7 +8202,7 @@ var BT_MARKETS = {
     label: 'Голове на отбор (Over)', sides: ['home','away'],
     line: 0.5,
     settle: function(c){
-      if (['FT','FT_PEN','AET'].indexOf(c.status) === -1) return null;
+      if (c.status !== 'FT') return null; // ✅ строго 90 мин — без ET/дузпи
       var g = c.side === 'home' ? c.hg : c.ag;
       if (g == null) return null;
       return g > BT_MARKETS.teamgoals.line ? 1 : 0;
@@ -8212,7 +8212,7 @@ var BT_MARKETS = {
     label: 'Двоен шанс (1X / X2 / 12)', sides: ['1x','x2','12'],
     settle: function(c){
       var s = c.status;
-      if (['FT','FT_PEN','AET'].indexOf(s) === -1) return null;
+      if (s !== 'FT') return null; // ✅ строго 90 мин — без ET/дузпи
       if (BT_STATE.etDraw && (s === 'FT_PEN' || s === 'AET')) {
         // 90-мин равенство преди ET/дузпи → печели 1X и X2, губи 12
         return c.side === '12' ? 0 : 1;
@@ -11072,6 +11072,46 @@ function oaModelDetectMarket(outcome, filename) {
   var o = (outcome || '').toLowerCase().trim();
   var f = (filename || '').toLowerCase();
   var src = o + ' ' + f;
+
+  // ── Точни кодове от OA export-ите (Outcome колоната) — проверяват се
+  // ПЪРВИ, преди по-свободните шаблони. "25" = линия 2.5 и т.н. ──
+  var EXACT = {
+    'over_05':{key:'total_over_05',label:'Общо +0.5 гола',line:0.5,market:'total',dir:'over'},
+    'under_05':{key:'total_under_05',label:'Общо -0.5 гола',line:0.5,market:'total',dir:'under'},
+    'over_15':{key:'total_over_15',label:'Общо +1.5 гола',line:1.5,market:'total',dir:'over'},
+    'under_15':{key:'total_under_15',label:'Общо -1.5 гола',line:1.5,market:'total',dir:'under'},
+    'over_25':{key:'total_over_25',label:'Общо +2.5 гола',line:2.5,market:'total',dir:'over'},
+    'under_25':{key:'total_under_25',label:'Общо -2.5 гола',line:2.5,market:'total',dir:'under'},
+    'over_35':{key:'total_over_35',label:'Общо +3.5 гола',line:3.5,market:'total',dir:'over'},
+    'under_35':{key:'total_under_35',label:'Общо -3.5 гола',line:3.5,market:'total',dir:'under'},
+    'over_45':{key:'total_over_45',label:'Общо +4.5 гола',line:4.5,market:'total',dir:'over'},
+    'under_45':{key:'total_under_45',label:'Общо -4.5 гола',line:4.5,market:'total',dir:'under'},
+    'home_over_05':{key:'home_over_05',label:'Дом +0.5 гола',line:0.5,side:'home',dir:'over'},
+    'home_under_05':{key:'home_under_05',label:'Дом -0.5 гола',line:0.5,side:'home',dir:'under'},
+    'home_over_15':{key:'home_over_15',label:'Дом +1.5 гола',line:1.5,side:'home',dir:'over'},
+    'home_under_15':{key:'home_under_15',label:'Дом -1.5 гола',line:1.5,side:'home',dir:'under'},
+    'away_over_05':{key:'away_over_05',label:'Гост +0.5 гола',line:0.5,side:'away',dir:'over'},
+    'away_under_05':{key:'away_under_05',label:'Гост -0.5 гола',line:0.5,side:'away',dir:'under'},
+    'away_over_15':{key:'away_over_15',label:'Гост +1.5 гола',line:1.5,side:'away',dir:'over'},
+    'away_under_15':{key:'away_under_15',label:'Гост -1.5 гола',line:1.5,side:'away',dir:'under'},
+    'btts_yes':{key:'btts_yes',label:'BTTS Да'},
+    'btts_no':{key:'btts_no',label:'BTTS Не'},
+    'home_draw':{key:'dc_1x',label:'1X (Дом/Равен)'},
+    'draw_away':{key:'dc_x2',label:'X2 (Равен/Гост)'},
+    'home_away':{key:'dc_12',label:'12 (Дом/Гост)'},
+    'ht_home':{key:'ht_home',label:'HT Дом'},
+    'ht_draw':{key:'ht_draw',label:'HT Равен'},
+    'ht_away':{key:'ht_away',label:'HT Гост'},
+    'corners_over_8':{key:'corners_over_8',label:'+8 корнера',line:8,market:'corners',dir:'over'},
+    'corners_under_8':{key:'corners_under_8',label:'-8 корнера',line:8,market:'corners',dir:'under'},
+    'corners_over_9':{key:'corners_over_9',label:'+9 корнера',line:9,market:'corners',dir:'over'},
+    'corners_under_9':{key:'corners_under_9',label:'-9 корнера',line:9,market:'corners',dir:'under'},
+    'corners_over_10':{key:'corners_over_10',label:'+10 корнера',line:10,market:'corners',dir:'over'},
+    'corners_under_10':{key:'corners_under_10',label:'-10 корнера',line:10,market:'corners',dir:'under'},
+    '1h_goals_yes':{key:'1h_goals_yes',label:'1-во п-ме Гол Да'},
+    '1h_goals_no':{key:'1h_goals_no',label:'1-во п-ме Гол Не'}
+  };
+  if (EXACT[o]) return EXACT[o];
 
   if (/^home$/.test(o) || /ft_result_home|ft_home\b/.test(f)) return {key:'ft_home', label:'FT Дом Win'};
   if (/^away$/.test(o) || /ft_result_away|ft_away\b/.test(f)) return {key:'ft_away', label:'FT Гост Win'};
@@ -19060,7 +19100,7 @@ function parseCalibCSV(text) {
     var closeOdds = parseFloat(obj['Closing Odds']);
     var peakOdds = parseFloat(obj['Peak Odds']);
     if (isNaN(hg) || isNaN(ag)) continue;  // пропускаме без резултат
-    if (obj['Status'] !== 'FT' && obj['Status'] !== 'AET') continue;
+    if (obj['Status'] !== 'FT') continue;  // ✅ строго 90 мин — без ET/дузпи
     rows.push({
       id:           obj['ID'],
       home_team:    obj['Home Team'],
