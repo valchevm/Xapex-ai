@@ -3750,6 +3750,17 @@ input::placeholder, textarea::placeholder {
 
     <div id="oaModelSummary"></div>
     <div id="oaModelLeaderboard"></div>
+
+    <!-- ═══ 🤖 Провери с Gemini — праща band-разбивката + агрегата + извадка ═══ -->
+    <div style="background:#07101f;border:1px solid rgba(167,139,250,.25);border-radius:9px;padding:.7rem;margin-top:.8rem">
+      <div style="font-size:.62rem;color:var(--pur);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.5rem">🤖 Провери с Gemini</div>
+      <div style="font-size:.58rem;color:var(--dim);margin-bottom:.6rem;line-height:1.5">
+        Избери пазар и Gemini ще провери калибрацията по probability bands, ROI изчисленията и общия BSS за логическа коректност.
+      </div>
+      <select id="oaModelGeminiMarket" style="width:100%;margin-bottom:.5rem"></select>
+      <button class="btn btn-p btn-action" onclick="oaModelAskGemini()" style="width:100%">🤖 Провери с Gemini</button>
+      <div id="oaModelGeminiResult" style="display:none;margin-top:.7rem;background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.7rem;font-size:.66rem;line-height:1.6"></div>
+    </div>
   </div>
 </div>
 
@@ -11077,6 +11088,50 @@ function pcSuccessRate(pairs) {
   return { n: pairs.length, rate: correct / pairs.length * 100 };
 }
 
+var PC_GEMINI_CACHE = {}; // временен кеш за bulk CSV Gemini проверка, ключ по market key
+
+async function pcAskGemini(mktKey) {
+  var res = document.getElementById('pcGeminiResult_' + mktKey);
+  var d = PC_GEMINI_CACHE[mktKey];
+  if (!d || !res) return;
+
+  var key   = localStorage.getItem('xgpro_gemini_key') || '';
+  var model = localStorage.getItem('xgpro_gemini_model') || 'gemini-2.5-flash';
+  if (!key) {
+    res.style.display='block'; res.style.color='var(--yel)';
+    res.innerHTML = '⚠ Въведи Gemini API Key в ⚙️ Настройки → 🤖 Gemini AI';
+    return;
+  }
+
+  var prompt = 'Ти си независим одитор на изчисления за сравнение OA срещу калибриран Модел (OA blend-нат с Pinnacle implied вероятност). Провери за логическа коректност.\n\n' +
+    '=== ФОРМУЛИ ===\n' +
+    '- Модел вероятност = OA × тегло + (100/Pinnacle_коеф.) × (1 − тегло)\n' +
+    '- Brier Score = Средно от (вероятност/100 − резултат)²\n' +
+    '- BSS = 1 − Brier / (base_rate × (1−base_rate))\n\n' +
+    '=== ЗАСЕЧКА ОТ 2 НЕЗАВИСИМИ МЕСТА (трябва да съвпадат) ===\n' + JSON.stringify(d.crossCheck, null, 1) + '\n\n' +
+    '=== КОНФИГУРАЦИЯ ===\nПазар: ' + d.label + '\nТегло: ' + d.currentWeight + '% OA + ' + (100-d.currentWeight) + '% Pinnacle\n\n' +
+    '=== OA ===\n' + JSON.stringify(d.oaStats, null, 1) + '\n\n' +
+    '=== МОДЕЛ ===\n' + JSON.stringify(d.modelStats, null, 1) + '\n\n' +
+    '=== ИЗВАДКА (до 20) ===\n' + JSON.stringify(d.sample, null, 1) + '\n\n' +
+    'ИНСТРУКЦИИ:\n' +
+    '- ПЪРВО провери засечката от 2 места — трябва да съвпадат.\n' +
+    '- Провери ръчно 2-3 реда от извадката — ако има Pinnacle коефициент, преизчисли Модел вероятността по формулата.\n' +
+    '- Кажи ясно дали всичко е коректно.\n' +
+    '- Кратко, на български.';
+
+  res.style.display='block'; res.style.color='var(--acc)';
+  res.innerHTML = '⏳ Gemini проверява...';
+
+  try {
+    var result = await geminiCall(key, model, prompt, { temperature: 0.2, maxOutputTokens: 2500 });
+    var html = geminiFormat(result.text);
+    res.style.color='var(--txt)';
+    res.innerHTML = '<div style="font-size:.56rem;color:var(--pur);font-weight:600;margin-bottom:.3rem">✨ Gemini ' + result.model + '</div><p>' + html + '</p>';
+  } catch(e) {
+    res.style.color='var(--red)'; res.innerHTML = '❌ ' + e.message;
+  }
+}
+
 function pcUploadAnalyze() {
   var box = document.getElementById('pcUploadResult');
   if (!box) return;
@@ -11172,6 +11227,28 @@ function pcUploadAnalyze() {
       '</div>';
     }
 
+    // ═══ Засечка от 2 независими места: oaStats/modelStats (агрегат) срещу
+    // прясно преизчислено директно от oaPairs/modelPairs — хваща евентуален
+    // бъг в самата агрегация на pcBrierStats. ═══
+    function crossCheckPairs(pairs) {
+      var n = pairs.length, brierSum = 0, winSum = 0;
+      pairs.forEach(function(p){ brierSum += Math.pow(p[0]/100 - p[1], 2); winSum += p[1]; });
+      return { n:n, победи:winSum, brier:+(brierSum/n).toFixed(4) };
+    }
+    PC_GEMINI_CACHE[mktKey] = {
+      label: group.label, blendKey: blendKey, currentWeight: currentWeight,
+      oaStats: oaStats, modelStats: modelStats, withPinnacle: withPinnacle,
+      crossCheck: {
+        място1_oaПредАгрегирано: { n: oaStats.n, brier: +oaStats.brier.toFixed(4), bss: +oaStats.bss.toFixed(4) },
+        място2_oaПреизчисленоОтPairs: crossCheckPairs(oaPairs),
+        съвпадат: oaStats.n === oaPairs.length
+      },
+      sample: group.rows.slice(0, 20).map(function(r){
+        var res = oaModelSettle(r.mkt, r);
+        return { oaProb: +r.oaProb.toFixed(1), pinOdds: r.pinOdds || null, bet365Odds: r.bet365Odds || null, резултат: res===1?'WIN':res===0?'LOSS':'N/A' };
+      })
+    };
+
     html += '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.5rem">' +
       '<div style="font-size:.68rem;font-weight:700;color:var(--acc);margin-bottom:.15rem">' + group.label + '</div>' +
       '<div style="font-size:.56rem;color:var(--dim);margin-bottom:.4rem">n=' + oaStats.n + ' · с Pinnacle вход: ' + withPinnacle + '</div>' +
@@ -11189,6 +11266,8 @@ function pcUploadAnalyze() {
         srRow('Само value залози', srOaValue, srModelValue) +
         srRow('Абсолютно всички срещи', srOaAll, srModelAll) +
       '</div>' +
+      '<button class="btn btn-sec" style="width:100%;margin-top:.5rem;font-size:.58rem;padding:6px" onclick="pcAskGemini(\'' + mktKey + '\')">🤖 Провери с Gemini</button>' +
+      '<div id="pcGeminiResult_' + mktKey + '" style="display:none;margin-top:.5rem;background:#070d16;border-radius:6px;padding:.5rem;font-size:.6rem;line-height:1.6"></div>' +
     '</div>';
 
     // ✅ Действащо предложение за тегло — на база реалното сравнение
@@ -11258,6 +11337,56 @@ function pcBrierBinary(pYes, actualYes) {
   var o = actualYes ? 1 : 0;
   var p = (pYes||0)/100;
   return Math.pow(p-o, 2);
+}
+
+var PC_LIVE_GEMINI_CACHE = null;
+
+async function pcLiveAskGemini() {
+  var res = document.getElementById('pcLiveGeminiResult');
+  var d = PC_LIVE_GEMINI_CACHE;
+  if (!d || !res) return;
+
+  var key   = localStorage.getItem('xgpro_gemini_key') || '';
+  var model = localStorage.getItem('xgpro_gemini_model') || 'gemini-2.5-flash';
+  if (!key) {
+    res.style.display='block'; res.style.color='var(--yel)';
+    res.innerHTML = '⚠ Въведи Gemini API Key в ⚙️ Настройки → 🤖 Gemini AI';
+    return;
+  }
+
+  // Засечка от 2 места: сумата на n от отделните пазари срещу sampleSize
+  var sumN = d.rows.reduce(function(s,r){ return s + r.n; }, 0);
+  var crossCheck = {
+    място1_сборНаNПоПазари: sumN,
+    място2_бройМачовеВИзвадката: d.sampleSize,
+    забележка: 'Не е нужно да са равни (един мач може да участва в няколко пазара — 1X2+BTTS+O/U), но провери дали пропорциите изглеждат разумни'
+  };
+
+  var prompt = 'Ти си независим одитор на изчисления за живо сравнение OA срещу калибриран Модел, на база реални срещи от Fixtures (не bulk CSV).\n\n' +
+    '=== ФОРМУЛА ===\n' +
+    '- Brier Score = Средно от (вероятност/100 − резултат)²\n' +
+    '- По-нисък Brier = по-точен\n\n' +
+    '=== ЗАСЕЧКА ===\n' + JSON.stringify(crossCheck, null, 1) + '\n\n' +
+    '=== BRIER ПО ПАЗАР ===\n' + JSON.stringify(d.rows, null, 1) + '\n\n' +
+    '=== ОБЩО ===\nOA Brier: ' + d.aggOA + ' · Модел Brier: ' + d.aggModel + '\n\n' +
+    '=== ИЗВАДКА ОТ РЕАЛНИ МАЧОВЕ (до 20) ===\n' + JSON.stringify(d.sample, null, 1) + '\n\n' +
+    'ИНСТРУКЦИИ:\n' +
+    '- Провери дали общият Brier логично произлиза от Brier-а по пазари.\n' +
+    '- Провери 2-3 реда от извадката ръчно, ако е възможно.\n' +
+    '- Кажи ясно дали изчисленията изглеждат коректни.\n' +
+    '- Кратко, на български.';
+
+  res.style.display='block'; res.style.color='var(--acc)';
+  res.innerHTML = '⏳ Gemini проверява...';
+
+  try {
+    var result = await geminiCall(key, model, prompt, { temperature: 0.2, maxOutputTokens: 2500 });
+    var html = geminiFormat(result.text);
+    res.style.color='var(--txt)';
+    res.innerHTML = '<div style="font-size:.56rem;color:var(--pur);font-weight:600;margin-bottom:.3rem">✨ Gemini ' + result.model + '</div><p>' + html + '</p>';
+  } catch(e) {
+    res.style.color='var(--red)'; res.innerHTML = '❌ ' + e.message;
+  }
 }
 
 function pcRender() {
@@ -11340,6 +11469,16 @@ function pcRender() {
       '</div>';
     }).join('');
 
+    // ── Кеш за Gemini проверка на живото сравнение ──
+    PC_LIVE_GEMINI_CACHE = {
+      rows: rows.map(function(r){ return { пазар:r.market, n:r.n, avgBrierOA:+r.avgOA.toFixed(4), avgBrierModel:+r.avgModel.toFixed(4) }; }),
+      aggOA: +aggOA.toFixed(4), aggModel: +aggModel.toFixed(4), sampleSize: sample.length,
+      sample: sample.slice(0, 20).map(function(it){
+        return { резултат1x2: it.actual_result||null, btts: it.actual_btts||null, ou25: it.actual_ou25||null,
+          oaHome: it.oa_prob_home, modelHome: it.model_prob_home };
+      })
+    };
+
     sumBox.innerHTML =
       '<div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.25);border-radius:8px;padding:.6rem;margin-bottom:.6rem">' +
         '<div style="font-size:.66rem;color:var(--acc);font-weight:600;margin-bottom:.4rem">📊 Сравнение (последни ' + sample.length + ' с маркиран резултат)</div>' +
@@ -11350,6 +11489,8 @@ function pcRender() {
           '</div>';
         }).join('') +
         '<div style="font-size:.68rem;font-weight:700;color:' + betterColor + ';margin-top:.4rem;padding-top:.4rem;border-top:1px solid rgba(255,255,255,.08)">🏆 Общо по-точен: ' + better + ' (общ Brier OA ' + aggOA.toFixed(3) + ' · Модел ' + aggModel.toFixed(3) + ')</div>' +
+        '<button class="btn btn-sec" style="width:100%;margin-top:.5rem;font-size:.58rem;padding:6px" onclick="pcLiveAskGemini()">🤖 Провери с Gemini</button>' +
+        '<div id="pcLiveGeminiResult" style="display:none;margin-top:.5rem;background:#070d16;border-radius:6px;padding:.5rem;font-size:.6rem;line-height:1.6"></div>' +
       '</div>' + suggestHtml;
   } else {
     sumBox.innerHTML = '<div style="font-size:.62rem;color:var(--dim);padding:.3rem 0">Няма мачове с маркиран резултат още — маркирай ги в списъка отдолу.</div>';
@@ -11692,6 +11833,10 @@ function oaModelAnalyze() {
   }
 
   var totalN = OA_MODEL_STATE.cands.length;
+  var geminiSel = document.getElementById('oaModelGeminiMarket');
+  if (geminiSel) {
+    geminiSel.innerHTML = rows.map(function(r){ return '<option value="' + r.key + '">' + r.label + ' (n=' + r.n + ')</option>'; }).join('');
+  }
   sumBox.innerHTML =
     '<div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.25);border-radius:8px;padding:.6rem;margin-bottom:.6rem">' +
       '<div style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Общо: ' + rows.length + ' пазара анализирани, ' + totalN + ' наблюдения</div>' +
@@ -13863,8 +14008,9 @@ async function fxGeminiAnalysis(fxId) {
     '3. **Голове** — Over/Under 2.5 прогноза и защо\n' +
     '4. **BTTS** — вероятност и двата да вкарат\n' +
     '5. **Най-добър залог** — кой пазар предлага стойност\n' +
-    '6. **Риск** — какво може да обърне прогнозата\n\n' +
-    'Бъди конкретен с числата. Максимум 350 думи.';
+    '6. **Риск** — какво може да обърне прогнозата\n' +
+    (oaLine || oddsLine ? '7. **Съпоставка** — ако OA вероятността и/или implied вероятността от коефициентите (100/коеф.) се разминават значително от това, което показват суровите статистики по-горе, посочи го изрично и предположи защо (скорошна форма срещу сезонни средни, травми, промяна в състава и т.н.)\n' : '') +
+    '\nБъди конкретен с числата. Максимум 350 думи.';
 
   try {
     if (box) box.innerHTML = '<span style="color:var(--pur)">⟳ Gemini ' + model + '...</span>';
@@ -26486,6 +26632,96 @@ function btRenderCrossCheck(R) {
     '</div>';
 }
 
+// ── OA Модел: изпраща band-разбивката + 2-местна засечка + извадка
+// на Gemini, за независима проверка на калибрационните изчисления. ──
+async function oaModelAskGemini() {
+  var sel = document.getElementById('oaModelGeminiMarket');
+  var res = document.getElementById('oaModelGeminiResult');
+  if (!sel || !sel.value) return;
+  var marketKey = sel.value;
+
+  var key   = localStorage.getItem('xgpro_gemini_key') || '';
+  var model = localStorage.getItem('xgpro_gemini_model') || 'gemini-2.5-flash';
+  if (!key) {
+    if (res) { res.style.display='block'; res.style.color='var(--yel)';
+      res.innerHTML = '⚠ Въведи Gemini API Key в ⚙️ Настройки → 🤖 Gemini AI'; }
+    return;
+  }
+
+  var b = OA_MODEL_LAST_BYMARKET[marketKey];
+  if (!b) return;
+
+  // ═══ Засечка от 2 независими места ═══
+  // Място 1: b.n/b.w/b.predSum — предагрегираните суми (както се показват)
+  // Място 2: сумирано НАНОВО от band-овете (b.bands), независимо от
+  // мястото по-горе — хваща евентуален бъг между двете нива агрегация.
+  var bandN = 0, bandW = 0, bandPredSum = 0;
+  Object.keys(b.bands).forEach(function(bk){
+    var d = b.bands[bk];
+    bandN += d.n; bandW += d.w; bandPredSum += d.predSum;
+  });
+  var crossCheck = {
+    място1_общАгрегат: { n: b.n, победи: b.w, сумаПрогнози: +b.predSum.toFixed(1) },
+    място2_сумаОтBandовете: { n: bandN, победи: bandW, сумаПрогнози: +bandPredSum.toFixed(1) },
+    съвпадат: (b.n === bandN && b.w === bandW && Math.abs(b.predSum - bandPredSum) < 0.5)
+  };
+
+  var winRate = b.w / b.n * 100;
+  var avgPred = b.predSum / b.n;
+  var brier = b.brierSum / b.n;
+  var baseRate = b.w / b.n;
+  var brierRef = baseRate * (1 - baseRate);
+  var bss = brierRef > 0 ? (1 - brier / brierRef) : 0;
+
+  var summary = {
+    пазар: b.label, n: b.n, winRatePct: +winRate.toFixed(2), средноПрогнозираноPct: +avgPred.toFixed(2),
+    brier: +brier.toFixed(4), bss: +bss.toFixed(4),
+    flatROI: b.oddsN ? +(b.pnlFlat/b.oddsN*100).toFixed(2) : null, flatN: b.oddsN,
+    valueROI: b.valueN ? +(b.pnlValue/b.valueN*100).toFixed(2) : null, valueN: b.valueN
+  };
+
+  var bandsData = Object.keys(b.bands).map(Number).sort(function(a,c){return a-c;}).map(function(band){
+    var d = b.bands[band];
+    return { диапазон: band+'-'+(band+10)+'%', n: d.n, прогноза: +(d.predSum/d.n).toFixed(1), реално: +(d.w/d.n*100).toFixed(1) };
+  });
+
+  var sampleCands = OA_MODEL_STATE.cands.filter(function(c){ return c.mkt.key === marketKey; }).slice(0, 20).map(function(c){
+    var settled = oaModelSettle(c.mkt, c);
+    return { prob: c.prob, резултат: settled === 1 ? 'WIN' : settled === 0 ? 'LOSS' : 'N/A', коефициент: c.odds };
+  });
+
+  var prompt = 'Ти си независим одитор на калибрационни изчисления за спортен прогнозен модел. Провери следните данни за логическа коректност.\n\n' +
+    '=== ФОРМУЛИ ===\n' +
+    '- Win Rate% = Победи / Общо наблюдения × 100\n' +
+    '- Brier Score = Средно от (прогноза/100 − резултат)²\n' +
+    '- Brier Skill Score (BSS) = 1 − Brier / (base_rate × (1−base_rate)), base_rate = Win Rate/100\n' +
+    '- Flat ROI% = Обща печалба (при флет залог 1u) / Брой залози × 100\n\n' +
+    '=== ЗАСЕЧКА ОТ 2 НЕЗАВИСИМИ МЕСТА (трябва да съвпадат точно) ===\n' + JSON.stringify(crossCheck, null, 1) + '\n\n' +
+    '=== ОБОБЩЕНИ РЕЗУЛТАТИ ===\n' + JSON.stringify(summary, null, 1) + '\n\n' +
+    '=== РАЗБИВКА ПО PROBABILITY BANDS (трябва сборът на n да дава общото n) ===\n' + JSON.stringify(bandsData, null, 1) + '\n\n' +
+    '=== ИЗВАДКА ОТ РЕАЛНИ НАБЛЮДЕНИЯ (до 20) ===\n' + JSON.stringify(sampleCands, null, 1) + '\n\n' +
+    'ИНСТРУКЦИИ:\n' +
+    '- ПЪРВО провери "ЗАСЕЧКА ОТ 2 НЕЗАВИСИМИ МЕСТА" — трябва да имат ИДЕНТИЧНИ числа. Ако не съвпадат, кажи го ясно още в началото.\n' +
+    '- Провери дали сборът на n от bands-овете съответства на общото n.\n' +
+    '- Провери дали BSS формулата е приложена правилно на база показания Win Rate и Brier.\n' +
+    '- Ако всичко е коректно, кажи го ясно.\n' +
+    '- Отговаряй кратко, на български език.\n' +
+    '- Не измисляй числа извън предоставените данни.';
+
+  if (res) { res.style.display='block'; res.style.color='var(--acc)';
+    res.innerHTML = '⏳ Gemini проверява ' + b.n + ' наблюдения за "' + b.label + '"...'; }
+
+  try {
+    var result = await geminiCall(key, model, prompt, { temperature: 0.2, maxOutputTokens: 3000 });
+    var html = geminiFormat(result.text);
+    var modelNote = result.model !== model ? ' <span style="color:var(--yel);font-size:.58rem">(fallback)</span>' : '';
+    if (res) { res.style.color='var(--txt)';
+      res.innerHTML = '<div style="font-size:.6rem;color:var(--pur);font-weight:600;margin-bottom:.4rem">✨ Gemini ' + result.model + modelNote + '</div><p>' + html + '</p>'; }
+  } catch(e) {
+    if (res) { res.style.color='var(--red)'; res.innerHTML = '❌ ' + e.message; }
+  }
+}
+
 async function btAskGemini() {
   var ta = document.getElementById('btGeminiQuery');
   var res = document.getElementById('btGeminiResult');
@@ -26600,32 +26836,13 @@ async function btAskGemini() {
     res.innerHTML = '⏳ Gemini проверява ' + R.all.n + ' залога...'; }
 
   try {
-    var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + key;
-    var resp = await fetch(url, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: 3000 }
-      })
-    });
-    var data = await resp.json();
-    if (!resp.ok) throw new Error((data.error && data.error.message) || 'HTTP ' + resp.status);
-
-    var txt = '';
-    if (data.candidates && data.candidates[0] && data.candidates[0].content) {
-      var parts = data.candidates[0].content.parts || [];
-      parts.forEach(function(p){ if (p.text) txt += p.text; });
-    }
-    if (!txt) txt = '⚠ Gemini не върна отговор';
-
-    var html = txt
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-      .replace(/\*\*([^*]+)\*\*/g, '<strong style="color:var(--acc)">$1</strong>')
-      .replace(/\n/g, '<br>');
-    if (res) { res.style.color='var(--txt)'; res.innerHTML = html; }
+    var result = await geminiCall(key, model, prompt, { temperature: 0.2, maxOutputTokens: 3000 });
+    var html = geminiFormat(result.text);
+    var modelNote = result.model !== model ? ' <span style="color:var(--yel);font-size:.58rem">(fallback)</span>' : '';
+    if (res) { res.style.color='var(--txt)';
+      res.innerHTML = '<div style="font-size:.6rem;color:var(--pur);font-weight:600;margin-bottom:.4rem">✨ Gemini ' + result.model + modelNote + '</div><p>' + html + '</p>'; }
   } catch(e) {
-    if (res) { res.style.color='var(--red)'; res.innerHTML = '❌ Грешка: ' + e.message; }
+    if (res) { res.style.color='var(--red)'; res.innerHTML = '❌ ' + e.message; }
   }
 }
 
