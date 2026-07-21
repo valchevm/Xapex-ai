@@ -6515,23 +6515,27 @@ function calculate() {
     if (!hasOA && !hasPin) return; // Нищо ново — оставяме текущата прогноза
 
     // ── Тегловата схема (нова йерархия по заявка) ──
-    // 1. ИМА OA + Pinnacle → 40% OA + 60% Pinnacle (Poisson НЕ участва)
+    // 1. ИМА OA + Pinnacle → тегло ПО ИЗХОД (Дом/Равен/Гост поотделно —
+    //    всеки може да е калибриран различно, Poisson НЕ участва)
     // 2. ИМА само OA → само OA (Poisson НЕ участва)
     // 3. ИМА само Pinnacle → само Pinnacle
     // 4. НЯМА нищо → Poisson модел (този блок не се изпълнява, return по-горе)
-    var wBase, wPin, wOA;
+    var wBase, wPinH, wOAH, wPinD, wOAD, wPinA, wOAA;
     if (hasOA && hasPin) {
-      // ✅ Реално приложено OA тегло (от OA Калибрация Монитора), ако е
-      // прието за пазар 'ft1x2' — иначе базовите 40%, непроменено поведение.
-      var oaW1x2 = clamp(getOAWeight('ft1x2', 40), 0, 100) / 100;
-      wBase = 0; wPin = 1 - oaW1x2; wOA = oaW1x2;
+      // ✅ Три ОТДЕЛНИ тегла (от OA Калибрация Монитора) — Дом/Равен/Гост
+      // могат да имат различна OA точност, затова различно тегло.
+      var oaWHome = clamp(getOAWeight('ft_home', 40), 0, 100) / 100;
+      var oaWDraw = clamp(getOAWeight('ft_draw', 40), 0, 100) / 100;
+      var oaWAway = clamp(getOAWeight('ft_away', 40), 0, 100) / 100;
+      wBase = 0;
+      wOAH = oaWHome; wPinH = 1 - oaWHome;
+      wOAD = oaWDraw; wPinD = 1 - oaWDraw;
+      wOAA = oaWAway; wPinA = 1 - oaWAway;
     } else if (hasOA) {
-      wBase = 0; wPin = 0;    wOA = 1.0;       // само OA
+      wBase = 0; wOAH = wOAD = wOAA = 1.0; wPinH = wPinD = wPinA = 0; // само OA
     } else { // hasPin
-      wBase = 0; wPin = 1.0;  wOA = 0;         // само Pinnacle
+      wBase = 0; wOAH = wOAD = wOAA = 0; wPinH = wPinD = wPinA = 1.0; // само Pinnacle
     }
-    var total = wBase + wPin + wOA;
-    if (total > 0) { wBase /= total; wPin /= total; wOA /= total; }
 
     // ── 1X2 blend ──
     if (hasPin || hasOA) {
@@ -6547,9 +6551,9 @@ function calculate() {
       var oa_sum = pH_oa + pD_oa + pA_oa;
       if (oa_sum > 0) { pH_oa /= oa_sum; pD_oa /= oa_sum; pA_oa /= oa_sum; }
 
-      var pH_new = CC.pH * wBase + pH_pin * wPin + pH_oa * wOA;
-      var pD_new = CC.pD * wBase + pD_pin * wPin + pD_oa * wOA;
-      var pA_new = CC.pA * wBase + pA_pin * wPin + pA_oa * wOA;
+      var pH_new = CC.pH * wBase + pH_pin * wPinH + pH_oa * wOAH;
+      var pD_new = CC.pD * wBase + pD_pin * wPinD + pD_oa * wOAD;
+      var pA_new = CC.pA * wBase + pA_pin * wPinA + pA_oa * wOAA;
       var s_new  = pH_new + pD_new + pA_new;
       CC.pH = pH_new/s_new; CC.pD = pD_new/s_new; CC.pA = pA_new/s_new;
       CC.fair1 = fmt(1/CC.pH); CC.fairX = fmt(1/CC.pD); CC.fair2 = fmt(1/CC.pA);
@@ -8694,10 +8698,10 @@ function oaLoadWeightOverrides() {
   catch(e) { OA_WEIGHT_CACHE = {}; }
   return OA_WEIGHT_CACHE;
 }
-function oaSaveWeightOverride(market, weight) {
+function oaSaveWeightOverride(market, weight, meta) {
   var o = oaLoadWeightOverrides();
   var oldWeight = o[market] ? o[market].weight : null;
-  o[market] = { weight: weight, acceptedAt: new Date().toISOString() };
+  o[market] = { weight: weight, acceptedAt: new Date().toISOString(), meta: meta || null };
   OA_WEIGHT_CACHE = o;
   try { localStorage.setItem(OA_WEIGHT_STORE_KEY, JSON.stringify(o)); } catch(e){}
   // ── Async push към Oracle — не блокираме UI, друго устройство ще
@@ -8705,12 +8709,22 @@ function oaSaveWeightOverride(market, weight) {
   if (typeof fetch === 'function') {
     fetch('/api/oa-weight-overrides', {
       method: 'PUT', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ market_key: market, weight: weight })
+      body: JSON.stringify({
+        market_key: market, weight: weight,
+        sample_n: meta && meta.n != null ? meta.n : null,
+        bss: meta && meta.bss != null ? meta.bss : null,
+        source: meta && meta.source ? meta.source : null
+      })
     }).catch(function(e){ console.warn('[oaWeight] Oracle sync failed:', e.message); });
-    // ── История — за показване в Настройки: било X, стана Y, кога ──
+    // ── История — за показване в Настройки: било X, стана Y, кога, на база какво ──
     fetch('/api/oa-weight-history', {
       method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({ market_key: market, old_weight: oldWeight, new_weight: weight })
+      body: JSON.stringify({
+        market_key: market, old_weight: oldWeight, new_weight: weight,
+        sample_n: meta && meta.n != null ? meta.n : null,
+        bss: meta && meta.bss != null ? meta.bss : null,
+        source: meta && meta.source ? meta.source : null
+      })
     }).catch(function(e){ console.warn('[oaWeight] история неуспешна:', e.message); });
   }
 }
@@ -8734,7 +8748,9 @@ function oaSyncWeightOverridesFromOracle() {
     if (!data || !data.ok || !Array.isArray(data.items)) return;
     var o = {};
     data.items.forEach(function(it){
-      if (it.market_key) o[it.market_key] = { weight: it.weight, acceptedAt: it.updated_at || it.created_at };
+      if (!it.market_key) return;
+      var meta = (it.sample_n != null || it.bss != null || it.source) ? { n: it.sample_n, bss: it.bss, source: it.source } : null;
+      o[it.market_key] = { weight: it.weight, acceptedAt: it.updated_at || it.created_at, meta: meta };
     });
     OA_WEIGHT_CACHE = o;
     try { localStorage.setItem(OA_WEIGHT_STORE_KEY, JSON.stringify(o)); } catch(e){}
@@ -8876,7 +8892,7 @@ function oaRenderCalibrationPanel() {
             : 'Диагностично засега — calculate() още няма отделен OA+Pinnacle blend за "' + marketLabel + '", затова приемането само се пази за бъдеща употреба.') +
         '</div>' +
         '<div style="display:flex;gap:.5rem">' +
-          '<button class="btn btn-p" style="flex:1;font-size:.65rem" onclick="oaAcceptWeightSuggestion(\'' + BT_STATE.market + '\',' + sugg.suggested + ')">✅ Приеми</button>' +
+          '<button class="btn btn-p" style="flex:1;font-size:.65rem" onclick="oaAcceptWeightSuggestion(\'' + BT_STATE.market + '\',' + sugg.suggested + ',{n:' + calib.n + ',bss:' + calib.bss.toFixed(4) + ',source:\'backtester\'})">✅ Приеми</button>' +
           '<button class="btn btn-sec" style="flex:1;font-size:.65rem" onclick="oaRejectWeightSuggestion()">❌ Откажи</button>' +
         '</div>' +
       '</div>';
@@ -8891,8 +8907,8 @@ function oaRenderCalibrationPanel() {
   box.innerHTML = html;
 }
 
-window.oaAcceptWeightSuggestion = function(market, weight) {
-  oaSaveWeightOverride(market, weight);
+window.oaAcceptWeightSuggestion = function(market, weight, meta) {
+  oaSaveWeightOverride(market, weight, meta);
   var isLive = (market === 'ft1x2' || market === 'over');
   if (typeof showToast === 'function') {
     showToast('✅ OA тегло за "' + ((BT_MARKETS[market] || {}).label || market) + '" прието: ' + weight + '%' +
@@ -10821,7 +10837,9 @@ function pcBrierStats(pairs) {
 // (голови линии различни от 2.5, корнери, HT пазари) анализът е
 // диагностичен, без бутон за прилагане (няма съответен blend).
 function pcMarketToBlendKey(key) {
-  if (key === 'ft_home' || key === 'ft_away' || key === 'ft_draw') return 'ft1x2';
+  if (key === 'ft_home') return 'ft_home';
+  if (key === 'ft_away') return 'ft_away';
+  if (key === 'ft_draw') return 'ft_draw';
   if (key === 'dc_1x') return '1x';
   if (key === 'dc_x2') return 'x2';
   if (key === 'dc_12') return '12';
@@ -10973,7 +10991,7 @@ function pcUploadAnalyze() {
           '<div style="font-size:.65rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">💡 "' + group.label + '" → тегло "' + blendKey + '": ' + currentWeight + '% → ' + sugg.suggested + '%</div>' +
           '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem">На база ' + oaStats.n + ' наблюдения (OA BSS ' + (oaStats.bss>=0?'+':'') + (oaStats.bss*100).toFixed(1) + '% спрямо симулирания Модел). При "Приеми" веднага важи в calculate() — и на всяко устройство, на което влезеш.</div>' +
           '<div style="display:flex;gap:.4rem">' +
-            '<button class="btn btn-p" style="flex:1;font-size:.6rem;padding:6px" onclick="oaAcceptWeightSuggestion(\'' + blendKey + '\',' + sugg.suggested + ');pcUploadAnalyze();">✅ Приеми</button>' +
+            '<button class="btn btn-p" style="flex:1;font-size:.6rem;padding:6px" onclick="oaAcceptWeightSuggestion(\'' + blendKey + '\',' + sugg.suggested + ',{n:' + oaStats.n + ',bss:' + oaStats.bss.toFixed(4) + ',source:\'bulk_csv\'});pcUploadAnalyze();">✅ Приеми</button>' +
             '<button class="btn btn-sec" style="flex:1;font-size:.6rem;padding:6px" onclick="oaRejectWeightSuggestion()">❌ Откажи</button>' +
           '</div>' +
         '</div>';
@@ -11027,30 +11045,35 @@ function pcRender() {
   var lastN = parseInt(document.getElementById('pcLastN').value, 10) || 8;
 
   // ── Аз събирам всички Brier точки (от кой да е пазар с маркиран резултат),
-  // разделени по пазар, за детайлно сравнение + общ агрегат. ──
-  var buckets = { '1X2': {oa:[], model:[], oaWin:0, n:0}, 'BTTS': {oa:[], model:[], oaWin:0, n:0}, 'O/U 2.5': {oa:[], model:[], oaWin:0, n:0} };
+  // разделени по пазар, за детайлно сравнение + общ агрегат. 1X2 вече е
+  // РАЗДЕЛЕН на три отделни binary пазара (Дом/Равен/Гост), не общ. ──
+  var buckets = {
+    'FT Дом': {oa:[], model:[]}, 'FT Равен': {oa:[], model:[]}, 'FT Гост': {oa:[], model:[]},
+    'BTTS': {oa:[], model:[]}, 'O/U 2.5': {oa:[], model:[]}
+  };
   var withAnyResult = PC_ITEMS.filter(function(it){ return it.actual_result || it.actual_btts || it.actual_ou25; });
   var sample = withAnyResult.slice(0, lastN);
 
   sample.forEach(function(it){
     if (it.actual_result) {
-      var oaP1x2 = pcOutcomeProbs(it,'oa');
-      buckets['1X2'].oa.push(pcBrier1X2(oaP1x2, it.actual_result));
-      buckets['1X2'].model.push(pcBrier1X2(pcOutcomeProbs(it,'model'), it.actual_result));
-      var oaPredicted1x2 = it.actual_result === 'H' ? (oaP1x2.H||0)/100 : it.actual_result === 'D' ? (oaP1x2.D||0)/100 : (oaP1x2.A||0)/100;
-      buckets['1X2'].oaWin += 1; buckets['1X2'].n += 1; // всеки маркиран мач е точно 1 "събитие" за base rate цели (H/D/A трипосочно — base rate се смята различно, виж bssMulti по-долу)
+      var oaP1x2 = pcOutcomeProbs(it,'oa'), modelP1x2 = pcOutcomeProbs(it,'model');
+      var isH = it.actual_result === 'H', isD = it.actual_result === 'D', isA = it.actual_result === 'A';
+      buckets['FT Дом'].oa.push(pcBrierBinary(oaP1x2.H, isH));
+      buckets['FT Дом'].model.push(pcBrierBinary(modelP1x2.H, isH));
+      buckets['FT Равен'].oa.push(pcBrierBinary(oaP1x2.D, isD));
+      buckets['FT Равен'].model.push(pcBrierBinary(modelP1x2.D, isD));
+      buckets['FT Гост'].oa.push(pcBrierBinary(oaP1x2.A, isA));
+      buckets['FT Гост'].model.push(pcBrierBinary(modelP1x2.A, isA));
     }
     if (it.actual_btts) {
       var yesB = it.actual_btts === 'Y';
       buckets['BTTS'].oa.push(pcBrierBinary(it.oa_prob_btts, yesB));
       buckets['BTTS'].model.push(pcBrierBinary(it.model_prob_btts, yesB));
-      buckets['BTTS'].oaWin += yesB ? 1 : 0; buckets['BTTS'].n += 1;
     }
     if (it.actual_ou25) {
       var overB = it.actual_ou25 === 'O';
       buckets['O/U 2.5'].oa.push(pcBrierBinary(it.oa_prob_over, overB));
       buckets['O/U 2.5'].model.push(pcBrierBinary(it.model_prob_over, overB));
-      buckets['O/U 2.5'].oaWin += overB ? 1 : 0; buckets['O/U 2.5'].n += 1;
     }
   });
 
@@ -11068,7 +11091,7 @@ function pcRender() {
     var better = aggOA < aggModel ? 'OA' : (aggModel < aggOA ? 'Модел' : 'Равни');
     var betterColor = better === 'OA' ? 'var(--pur)' : better === 'Модел' ? 'var(--acc)' : 'var(--dim)';
 
-    var MARKET_TO_BLEND = { '1X2':'ft1x2', 'BTTS':'btts', 'O/U 2.5':'over' };
+    var MARKET_TO_BLEND = { 'FT Дом':'ft_home', 'FT Равен':'ft_draw', 'FT Гост':'ft_away', 'BTTS':'btts', 'O/U 2.5':'over' };
     var suggestHtml = rows.map(function(r){
       if (r.n < 10) return '';
       var blendKey = MARKET_TO_BLEND[r.market];
@@ -11076,18 +11099,17 @@ function pcRender() {
       var overrides = oaLoadWeightOverrides();
       var existing = overrides[blendKey];
       var currentWeight = existing ? existing.weight : 40;
-      // ✅ Директна разлика в Brier (работи еднакво добре за binary
-      // пазари И за 3-класовия 1X2, за разлика от формалния BSS,
-      // който изисква binary base rate).
+      // ✅ Директна разлика в Brier — вече всички пазари са binary,
+      // включително разделените Дом/Равен/Гост.
       var diff = r.avgModel - r.avgOA; // >0 = OA по-точен от текущия blend
       var SCALE = 150;
       var suggested = Math.round(Math.max(15, Math.min(65, currentWeight + diff * SCALE)));
       if (suggested === currentWeight) return '';
       return '<div style="background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:8px;padding:.55rem;margin-bottom:.5rem">' +
         '<div style="font-size:.64rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">💡 ' + r.market + ' ("' + blendKey + '" в модела): OA тегло ' + currentWeight + '% → ' + suggested + '%</div>' +
-        '<div style="font-size:.57rem;color:var(--dim);margin-bottom:.5rem">На база ' + r.n + ' реални срещи от Fixtures workspace-а. При "Приеми" веднага важи в calculate().</div>' +
+        '<div style="font-size:.57rem;color:var(--dim);margin-bottom:.5rem">На база ' + r.n + ' реални срещи от Fixtures workspace-а. При "Приеми" веднага важи в calculate() — и на всяко устройство.</div>' +
         '<div style="display:flex;gap:.4rem">' +
-          '<button class="btn btn-p" style="flex:1;font-size:.58rem;padding:6px" onclick="oaAcceptWeightSuggestion(\'' + blendKey + '\',' + suggested + ');pcRender();">✅ Приеми</button>' +
+          '<button class="btn btn-p" style="flex:1;font-size:.58rem;padding:6px" onclick="oaAcceptWeightSuggestion(\'' + blendKey + '\',' + suggested + ',{n:' + r.n + ',source:\'live\'});pcRender();">✅ Приеми</button>' +
           '<button class="btn btn-sec" style="flex:1;font-size:.58rem;padding:6px" onclick="oaRejectWeightSuggestion()">❌ Откажи</button>' +
         '</div>' +
       '</div>';
@@ -20291,7 +20313,9 @@ function getOaApiKey() {
 // стойност. Дърпа от /api/oa-weight-history (Oracle).
 // ═══════════════════════════════════════════════════════════════
 var WH_BLEND_LABELS = {
-  'ft1x2': 'FT 1X2 (Дом/Равен/Гост)',
+  'ft_home': 'FT Дом победа (1)',
+  'ft_draw': 'FT Равен (X)',
+  'ft_away': 'FT Гост победа (2)',
   '1x': 'Двоен шанс 1X',
   'x2': 'Двоен шанс X2',
   '12': 'Двоен шанс 12',
@@ -20309,6 +20333,7 @@ var WH_BLEND_LABELS = {
   'ht_draw': 'HT Равен',
   'ht_away': 'HT Гост'
 };
+var WH_SOURCE_LABELS = { 'backtester':'Backtester CSV', 'bulk_csv':'OA срещу Модел (bulk CSV)', 'live':'Живо сравнение (Fixtures)' };
 
 function toggleWeightHistoryPanel() {
   var p = document.getElementById('whPanel');
@@ -20327,7 +20352,7 @@ function whPopulateMarketSelect() {
   var keys = Object.keys(WH_BLEND_LABELS);
   sel.innerHTML = '<option value="">— избери пазар —</option>' +
     keys.map(function(k){
-      var has = overrides[k] ? ' (' + overrides[k].weight + '%)' : ' (40% — по подразбиране)';
+      var has = overrides[k] ? ' (' + overrides[k].weight + '% OA)' : ' (40% OA — по подразбиране)';
       return '<option value="' + k + '">' + WH_BLEND_LABELS[k] + has + '</option>';
     }).join('');
 }
@@ -20338,14 +20363,18 @@ function whLoadHistory() {
   var histBox = document.getElementById('whHistoryBox');
   if (!sel || !sel.value) { curBox.innerHTML = ''; histBox.innerHTML = ''; return; }
   var marketKey = sel.value;
+  var label = WH_BLEND_LABELS[marketKey] || marketKey;
 
   var overrides = oaLoadWeightOverrides();
   var cur = overrides[marketKey];
+  var curWeight = cur ? cur.weight : 40;
+  var curMeta = cur && cur.meta;
   curBox.innerHTML =
-    '<div style="background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.3);border-radius:8px;padding:.55rem">' +
-      '<div style="font-size:.6rem;color:var(--dim)">Текуща активна стойност:</div>' +
-      '<div style="font-size:.85rem;font-weight:700;color:var(--grn)">' + (cur ? cur.weight + '% OA' : '40% OA (по подразбиране, никога не е менена)') + '</div>' +
-      (cur && cur.acceptedAt ? '<div style="font-size:.56rem;color:var(--dim);margin-top:.2rem">от ' + new Date(cur.acceptedAt).toLocaleString('bg-BG') + '</div>' : '') +
+    '<div style="background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.3);border-radius:8px;padding:.6rem">' +
+      '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.3rem">Текуща активна формула за "' + label + '":</div>' +
+      '<div style="font-size:.85rem;font-weight:700;color:var(--grn)">' + curWeight + '% <span style="color:var(--pur)">OA</span> + ' + (100-curWeight) + '% <span style="color:var(--acc)">Pinnacle</span></div>' +
+      (cur && cur.acceptedAt ? '<div style="font-size:.56rem;color:var(--dim);margin-top:.3rem">прието на ' + new Date(cur.acceptedAt).toLocaleString('bg-BG') + '</div>' : '<div style="font-size:.56rem;color:var(--dim);margin-top:.3rem">по подразбиране — никога не е сменяно</div>') +
+      (curMeta && curMeta.n != null ? '<div style="font-size:.58rem;color:var(--txt);margin-top:.4rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.08)">📊 Калибрирано на база <b>' + curMeta.n + '</b> мача' + (curMeta.bss != null ? ' · OA BSS <b>' + (curMeta.bss>=0?'+':'') + (curMeta.bss*100).toFixed(1) + '%</b>' : '') + (curMeta.source ? ' · източник: ' + (WH_SOURCE_LABELS[curMeta.source]||curMeta.source) : '') + '</div>' : '') +
     '</div>';
 
   histBox.innerHTML = '<div style="font-size:.6rem;color:var(--dim);padding:.4rem 0">Зареждане на история...</div>';
@@ -20357,10 +20386,12 @@ function whLoadHistory() {
       histBox.innerHTML = '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.4rem">История на промените (най-нови първо):</div>' +
         items.map(function(it){
           var when = it.changed_at ? new Date(it.changed_at).toLocaleString('bg-BG') : '';
-          var oldW = it.old_weight != null ? it.old_weight + '%' : '40% (по подразбиране)';
-          return '<div style="background:#070d16;border-radius:6px;padding:.4rem .6rem;margin-bottom:.3rem;font-size:.6rem">' +
-            '<span style="color:var(--dim)">' + oldW + '</span> → <b style="color:var(--acc)">' + it.new_weight + '%</b>' +
-            '<div style="color:var(--dim);font-size:.55rem;margin-top:.1rem">' + when + '</div>' +
+          var oldW = it.old_weight != null ? it.old_weight + '% OA' : '40% OA (по подразбиране)';
+          var newW = it.new_weight;
+          return '<div style="background:#070d16;border-radius:6px;padding:.45rem .6rem;margin-bottom:.3rem;font-size:.6rem">' +
+            '<div>' + oldW + ' <span style="color:var(--dim)">(т.е. ' + (it.old_weight!=null?(100-it.old_weight):60) + '% Pinnacle)</span> → <b style="color:var(--acc)">' + newW + '% OA</b> <span style="color:var(--dim)">(' + (100-newW) + '% Pinnacle)</span></div>' +
+            (it.sample_n != null ? '<div style="color:var(--txt);margin-top:.2rem">📊 на база ' + it.sample_n + ' мача' + (it.bss != null ? ' · BSS ' + (it.bss>=0?'+':'') + (it.bss*100).toFixed(1) + '%' : '') + (it.source ? ' · ' + (WH_SOURCE_LABELS[it.source]||it.source) : '') + '</div>' : '') +
+            '<div style="color:var(--dim);font-size:.55rem;margin-top:.15rem">' + when + '</div>' +
           '</div>';
         }).join('');
     })
