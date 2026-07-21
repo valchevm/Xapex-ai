@@ -1817,7 +1817,7 @@ input::placeholder, textarea::placeholder {
   .mw-src { font-size:.62rem; color:var(--dim) }
   .fx-match-item.mw-active { border-color:rgba(56,189,248,.6) !important;
     box-shadow:0 0 0 1px rgba(56,189,248,.3) }
-  .mw-calc-badge { display:inline-block; margin-left:5px; font-size:.58rem; font-weight:700;
+  .mw-calc-badge { display:inline-block; margin-left:5px; font-size:.68rem; font-weight:700;
     color:var(--grn); background:rgba(52,211,153,.12); border:1px solid rgba(52,211,153,.35);
     border-radius:5px; padding:1px 6px }
 
@@ -19059,13 +19059,14 @@ function runQuickBacktest() {
         p.lambdaH.toFixed(2) + '–' + p.lambdaA.toFixed(2) + '</div>';
       html += '</div>';
 
-      // Top market badge (prominent)
+      // Top market badge (prominent) — "Stats" в надписа изрично отличава
+      // тази бърза stats-само оценка от реалния калибриран Модел.
       html += '<div style="display:flex;align-items:center;gap:8px;' +
         'background:linear-gradient(90deg, ' + top.col + '22, transparent);' +
         'border-left:3px solid ' + top.col + ';padding:5px 10px;border-radius:5px;margin-bottom:5px">';
-      html += '<span style="font-size:.55rem;color:var(--dim);text-transform:uppercase;letter-spacing:.5px">📊 МОДЕЛ:</span>';
-      html += '<span style="font-size:.85rem;font-weight:700;color:' + top.col + '">' + top.mkt + '</span>';
-      html += '<span style="font-size:.7rem;color:' + top.col + ';opacity:.85">' + Math.round(top.prob) + '%</span>';
+      html += '<span style="font-size:.52rem;color:var(--dim);text-transform:uppercase;letter-spacing:.5px">📊 МОДЕЛ Stats:</span>';
+      html += '<span style="font-size:.78rem;font-weight:700;color:' + top.col + '">' + top.mkt + '</span>';
+      html += '<span style="font-size:.64rem;color:' + top.col + ';opacity:.85">' + Math.round(top.prob) + '%</span>';
       html += '</div>';
 
       // Алтернативни маркети
