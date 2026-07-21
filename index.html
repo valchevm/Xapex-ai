@@ -8713,7 +8713,8 @@ function oaSaveWeightOverride(market, weight, meta) {
         market_key: market, weight: weight,
         sample_n: meta && meta.n != null ? meta.n : null,
         bss: meta && meta.bss != null ? meta.bss : null,
-        source: meta && meta.source ? meta.source : null
+        source: meta && meta.source ? meta.source : null,
+        meta_json: meta ? JSON.stringify(meta) : null
       })
     }).catch(function(e){ console.warn('[oaWeight] Oracle sync failed:', e.message); });
     // ── История — за показване в Настройки: било X, стана Y, кога, на база какво ──
@@ -8723,7 +8724,8 @@ function oaSaveWeightOverride(market, weight, meta) {
         market_key: market, old_weight: oldWeight, new_weight: weight,
         sample_n: meta && meta.n != null ? meta.n : null,
         bss: meta && meta.bss != null ? meta.bss : null,
-        source: meta && meta.source ? meta.source : null
+        source: meta && meta.source ? meta.source : null,
+        meta_json: meta ? JSON.stringify(meta) : null
       })
     }).catch(function(e){ console.warn('[oaWeight] история неуспешна:', e.message); });
   }
@@ -8749,7 +8751,9 @@ function oaSyncWeightOverridesFromOracle() {
     var o = {};
     data.items.forEach(function(it){
       if (!it.market_key) return;
-      var meta = (it.sample_n != null || it.bss != null || it.source) ? { n: it.sample_n, bss: it.bss, source: it.source } : null;
+      var meta = null;
+      if (it.meta_json) { try { meta = JSON.parse(it.meta_json); } catch(e){} }
+      if (!meta && (it.sample_n != null || it.bss != null || it.source)) meta = { n: it.sample_n, bss: it.bss, source: it.source };
       o[it.market_key] = { weight: it.weight, acceptedAt: it.updated_at || it.created_at, meta: meta };
     });
     OA_WEIGHT_CACHE = o;
@@ -8815,19 +8819,30 @@ function oaCalcCalibration() {
 // Brier Skill Score е стандартна, статистически обоснована метрика —
 // всеки 0.10 (10%) подобрение спрямо "climatology" baseline премества
 // теглото с ~SCALE пр.п., пропорционално на реалната сила на предимството.
-function oaSuggestWeight(bss, baseWeight) {
-  if (bss == null) return null;
+function oaSuggestWeight(oaBss, baseWeight, opts) {
+  if (oaBss == null) return null;
+  opts = opts || {};
   var base = baseWeight != null ? baseWeight : 40;
-  var SCALE = 40; // пр.п. на единица BSS (0.10 BSS → 4 пр.п. промяна)
-  var delta = bss * SCALE;
-  var suggested = Math.round(clamp(base + delta, 15, 65));
+  var n = opts.n;
+  // ── Разлика спрямо референтен BSS (обикновено на текущия Модел) —
+  // ако няма подаден референтен BSS, третираме 0 като неутрална база
+  // (типично за чиста OA калибрация без сравнение с blend). ──
+  var referenceBss = opts.referenceBss != null ? opts.referenceBss : 0;
+  var diff = oaBss - referenceBss;
+  var SCALE = 120; // пр.п. движение на единица разлика в BSS
+  // ── Доверие според размера на извадката — малко данни → предпазливо
+  // предложение (дори голяма разлика не мести много); много данни →
+  // движението следва реалната сила на сигнала, каквото и да е то. ──
+  var confidence = n != null ? Math.min(1, Math.sqrt(n / 300)) : 1;
+  var delta = diff * SCALE * confidence;
+  var suggested = Math.round(clamp(base + delta, 10, 70));
   var tier;
-  if (bss >= 0.15)      tier = 'Отлична';
-  else if (bss >= 0.08) tier = 'Добра';
-  else if (bss >= 0.02) tier = 'Приемлива';
-  else if (bss >= -0.05) tier = 'Слаба';
+  if (oaBss >= 0.15)      tier = 'Отлична';
+  else if (oaBss >= 0.08) tier = 'Добра';
+  else if (oaBss >= 0.02) tier = 'Приемлива';
+  else if (oaBss >= -0.05) tier = 'Слаба';
   else                   tier = 'Много слаба';
-  return { tier: tier, base: base, bss: bss, delta: Math.round(suggested - base), suggested: suggested };
+  return { tier: tier, base: base, bss: oaBss, delta: Math.round(suggested - base), suggested: suggested };
 }
 
 function oaRenderCalibrationPanel() {
@@ -8855,7 +8870,7 @@ function oaRenderCalibrationPanel() {
   var overrides = oaLoadWeightOverrides();
   var existing = overrides[BT_STATE.market];
   var currentWeight = existing ? existing.weight : 40;
-  var sugg = oaSuggestWeight(calib.bss, currentWeight);
+  var sugg = oaSuggestWeight(calib.bss, currentWeight, { n: calib.n });
   var pendingChange = sugg.suggested !== currentWeight;
 
   var rowsHtml = calib.rows.map(function(r){
@@ -8906,6 +8921,13 @@ function oaRenderCalibrationPanel() {
 
   box.innerHTML = html;
 }
+
+var PC_PENDING_META = {}; // временен кеш за пълните calibration данни (bulk CSV) — вижте oaAcceptWeightFromCache
+
+window.oaAcceptWeightFromCache = function(market, weight) {
+  var meta = PC_PENDING_META[market] || null;
+  oaAcceptWeightSuggestion(market, weight, meta);
+};
 
 window.oaAcceptWeightSuggestion = function(market, weight, meta) {
   oaSaveWeightOverride(market, weight, meta);
@@ -10928,7 +10950,7 @@ function pcUploadAnalyze() {
 
     var better = oaStats.bss > modelStats.bss ? 'OA' : (modelStats.bss > oaStats.bss ? 'Модел' : 'Равни');
     var betterColor = better === 'OA' ? 'var(--pur)' : better === 'Модел' ? 'var(--acc)' : 'var(--dim)';
-    var sugg = blendKey ? oaSuggestWeight(oaStats.bss, currentWeight) : null;
+    var sugg = blendKey ? oaSuggestWeight(oaStats.bss, currentWeight, { referenceBss: modelStats.bss, n: oaStats.n }) : null;
 
     // ═══ 4-те варианта успеваемост: OA(преди) срещу Модел с НОВОТО
     // предложено тегло(след) × (само value залози / абсолютно всички) ═══
@@ -10987,11 +11009,26 @@ function pcUploadAnalyze() {
     // OA срещу симулирания Модел (не OA срещу гол bookmaker).
     if (blendKey && sugg) {
       if (sugg.suggested !== currentWeight) {
+        // ── Пълните данни от картата — пазим ги в глобален кеш (не
+        // директно в onclick, за да избегнем escaping усложнения), за
+        // да могат да се запишат в Настройки при "Приеми". ──
+        PC_PENDING_META[blendKey] = {
+          n: oaStats.n, bss: +oaStats.bss.toFixed(4), oaWinRate: +oaStats.winRate.toFixed(2),
+          modelBss: +modelStats.bss.toFixed(4), modelWinRate: +modelStats.winRate.toFixed(2),
+          withPinnacle: withPinnacle,
+          roiOA: oaROIn ? +((oaROI/oaROIn*100).toFixed(2)) : null, roiOAn: oaROIn,
+          roiModel: modelROIn ? +((modelROI/modelROIn*100).toFixed(2)) : null, roiModelN: modelROIn,
+          srValueOA: srOaValue ? +srOaValue.rate.toFixed(2) : null, srValueOAn: srOaValue ? srOaValue.n : null,
+          srValueModel: srModelValue ? +srModelValue.rate.toFixed(2) : null, srValueModelN: srModelValue ? srModelValue.n : null,
+          srAllOA: srOaAll ? +srOaAll.rate.toFixed(2) : null,
+          srAllModel: srModelAll ? +srModelAll.rate.toFixed(2) : null,
+          source: 'bulk_csv'
+        };
         html += '<div style="background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:8px;padding:.55rem;margin-bottom:.6rem">' +
           '<div style="font-size:.65rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">💡 "' + group.label + '" → тегло "' + blendKey + '": ' + currentWeight + '% → ' + sugg.suggested + '%</div>' +
           '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem">На база ' + oaStats.n + ' наблюдения (OA BSS ' + (oaStats.bss>=0?'+':'') + (oaStats.bss*100).toFixed(1) + '% спрямо симулирания Модел). При "Приеми" веднага важи в calculate() — и на всяко устройство, на което влезеш.</div>' +
           '<div style="display:flex;gap:.4rem">' +
-            '<button class="btn btn-p" style="flex:1;font-size:.6rem;padding:6px" onclick="oaAcceptWeightSuggestion(\'' + blendKey + '\',' + sugg.suggested + ',{n:' + oaStats.n + ',bss:' + oaStats.bss.toFixed(4) + ',source:\'bulk_csv\'});pcUploadAnalyze();">✅ Приеми</button>' +
+            '<button class="btn btn-p" style="flex:1;font-size:.6rem;padding:6px" onclick="oaAcceptWeightFromCache(\'' + blendKey + '\',' + sugg.suggested + ');pcUploadAnalyze();">✅ Приеми</button>' +
             '<button class="btn btn-sec" style="flex:1;font-size:.6rem;padding:6px" onclick="oaRejectWeightSuggestion()">❌ Откажи</button>' +
           '</div>' +
         '</div>';
@@ -11100,10 +11137,12 @@ function pcRender() {
       var existing = overrides[blendKey];
       var currentWeight = existing ? existing.weight : 40;
       // ✅ Директна разлика в Brier — вече всички пазари са binary,
-      // включително разделените Дом/Равен/Гост.
+      // включително разделените Дом/Равен/Гост. Доверието расте с n,
+      // за да не мести с фиксирана крачка при малка извадка.
       var diff = r.avgModel - r.avgOA; // >0 = OA по-точен от текущия blend
       var SCALE = 150;
-      var suggested = Math.round(Math.max(15, Math.min(65, currentWeight + diff * SCALE)));
+      var confidence = Math.min(1, Math.sqrt(r.n / 30)); // живите мачове са по-малко на брой от bulk CSV, по-нисък праг
+      var suggested = Math.round(clamp(currentWeight + diff * SCALE * confidence, 10, 70));
       if (suggested === currentWeight) return '';
       return '<div style="background:rgba(56,189,248,.08);border:1px solid rgba(56,189,248,.3);border-radius:8px;padding:.55rem;margin-bottom:.5rem">' +
         '<div style="font-size:.64rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">💡 ' + r.market + ' ("' + blendKey + '" в модела): OA тегло ' + currentWeight + '% → ' + suggested + '%</div>' +
@@ -20375,6 +20414,9 @@ function whLoadHistory() {
       '<div style="font-size:.85rem;font-weight:700;color:var(--grn)">' + curWeight + '% <span style="color:var(--pur)">OA</span> + ' + (100-curWeight) + '% <span style="color:var(--acc)">Pinnacle</span></div>' +
       (cur && cur.acceptedAt ? '<div style="font-size:.56rem;color:var(--dim);margin-top:.3rem">прието на ' + new Date(cur.acceptedAt).toLocaleString('bg-BG') + '</div>' : '<div style="font-size:.56rem;color:var(--dim);margin-top:.3rem">по подразбиране — никога не е сменяно</div>') +
       (curMeta && curMeta.n != null ? '<div style="font-size:.58rem;color:var(--txt);margin-top:.4rem;padding-top:.3rem;border-top:1px solid rgba(255,255,255,.08)">📊 Калибрирано на база <b>' + curMeta.n + '</b> мача' + (curMeta.bss != null ? ' · OA BSS <b>' + (curMeta.bss>=0?'+':'') + (curMeta.bss*100).toFixed(1) + '%</b>' : '') + (curMeta.source ? ' · източник: ' + (WH_SOURCE_LABELS[curMeta.source]||curMeta.source) : '') + '</div>' : '') +
+      (curMeta && curMeta.modelBss != null ? '<div style="font-size:.58rem;color:var(--txt);margin-top:.3rem">🤖 Модел BSS <b>' + (curMeta.modelBss>=0?'+':'') + (curMeta.modelBss*100).toFixed(1) + '%</b> · WR OA ' + curMeta.oaWinRate + '% / Модел ' + curMeta.modelWinRate + '%' + (curMeta.withPinnacle!=null ? ' · с Pinnacle вход: ' + curMeta.withPinnacle : '') + '</div>' : '') +
+      (curMeta && (curMeta.roiOA != null || curMeta.roiModel != null) ? '<div style="font-size:.58rem;color:var(--txt);margin-top:.3rem">💰 ROI (Bet365, value залози): OA ' + (curMeta.roiOA!=null?(curMeta.roiOA+'% (n='+curMeta.roiOAn+')'):'—') + ' · Модел ' + (curMeta.roiModel!=null?(curMeta.roiModel+'% (n='+curMeta.roiModelN+')'):'—') + '</div>' : '') +
+      (curMeta && (curMeta.srValueOA != null || curMeta.srAllOA != null) ? '<div style="font-size:.58rem;color:var(--txt);margin-top:.3rem">🎯 Успеваемост само value: OA ' + (curMeta.srValueOA!=null?curMeta.srValueOA+'%':'—') + ' → Модел ' + (curMeta.srValueModel!=null?curMeta.srValueModel+'%':'—') + '<br>🎯 Успеваемост всички срещи: OA ' + (curMeta.srAllOA!=null?curMeta.srAllOA+'%':'—') + ' → Модел ' + (curMeta.srAllModel!=null?curMeta.srAllModel+'%':'—') + '</div>' : '') +
     '</div>';
 
   histBox.innerHTML = '<div style="font-size:.6rem;color:var(--dim);padding:.4rem 0">Зареждане на история...</div>';

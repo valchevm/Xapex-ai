@@ -32,11 +32,11 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "POST") {
-      const { market_key, old_weight, new_weight, sample_n, bss, source } = req.body || {};
+      const { market_key, old_weight, new_weight, sample_n, bss, source, meta_json } = req.body || {};
       if (!market_key || new_weight == null) { res.status(400).json({ ok: false, error: "missing_fields" }); return; }
       const payload = {
         market_key, old_weight: old_weight != null ? old_weight : null, new_weight,
-        sample_n: sample_n ?? null, bss: bss ?? null, source: source ?? null,
+        sample_n: sample_n ?? null, bss: bss ?? null, source: source ?? null, meta_json: meta_json ?? null,
         changed_at: new Date().toISOString(),
       };
       const r = await oraFetch(`/${TABLE}/`, "POST", payload);

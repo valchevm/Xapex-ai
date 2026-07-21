@@ -30,14 +30,14 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "PUT") {
-      const { market_key, weight, sample_n, bss, source } = req.body || {};
+      const { market_key, weight, sample_n, bss, source, meta_json } = req.body || {};
       if (!market_key || weight == null) { res.status(400).json({ ok: false, error: "missing_market_key_or_weight" }); return; }
 
       const existing = await oraFetch(`/${TABLE}/${encodeURIComponent(market_key)}`, "GET");
-      const payload = { market_key, weight, sample_n: sample_n ?? null, bss: bss ?? null, source: source ?? null, updated_at: new Date().toISOString() };
+      const payload = { market_key, weight, sample_n: sample_n ?? null, bss: bss ?? null, source: source ?? null, meta_json: meta_json ?? null, updated_at: new Date().toISOString() };
 
       if (existing.ok && existing.json) {
-        const full = { ...existing.json, weight, sample_n: payload.sample_n, bss: payload.bss, source: payload.source, updated_at: payload.updated_at };
+        const full = { ...existing.json, weight, sample_n: payload.sample_n, bss: payload.bss, source: payload.source, meta_json: payload.meta_json, updated_at: payload.updated_at };
         delete full.links; delete full._links;
         const r = await oraFetch(`/${TABLE}/${encodeURIComponent(market_key)}`, "PUT", full);
         if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
