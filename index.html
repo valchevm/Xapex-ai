@@ -4140,6 +4140,25 @@ input::placeholder, textarea::placeholder {
   </div>
   <div id="settingsPanel" style="display:none;padding:.4rem 0">
 
+    <!-- ═══ ИСТОРИЯ НА КАЛИБРАЦИЯТА (OA тегла по пазар) ═══ -->
+    <div style="border:1px solid rgba(167,139,250,.25);border-radius:8px;margin-bottom:.5rem;overflow:hidden">
+      <div onclick="toggleWeightHistoryPanel()" style="cursor:pointer;padding:.65rem 1rem;display:flex;align-items:center;gap:.5rem;background:linear-gradient(135deg,rgba(167,139,250,.08),rgba(56,189,248,.04))">
+        <span style="font-size:1.1rem">📈</span>
+        <span style="font-size:.78rem;font-weight:700;color:var(--pur)">История на калибрацията</span>
+        <span id="whArrow" style="margin-left:auto;font-size:.7rem;color:var(--dim)">▼</span>
+      </div>
+      <div id="whPanel" style="padding:.9rem 1rem;background:#0a1429;display:none">
+        <div style="font-size:.6rem;color:var(--dim);margin-bottom:.7rem;line-height:1.5">
+          Движението на OA теглото за всеки пазар във времето — кога е било сменено, от какво на какво, и коя е последната актуална стойност.
+        </div>
+        <select id="whMarketSel" onchange="whLoadHistory()" style="width:100%;margin-bottom:.7rem">
+          <option value="">— избери пазар —</option>
+        </select>
+        <div id="whCurrentBox"></div>
+        <div id="whHistoryBox" style="margin-top:.6rem"></div>
+      </div>
+    </div>
+
     <!-- ═══ ODDALERTS API ═══ -->
     <div style="border:1px solid rgba(56,189,248,.25);border-radius:8px;margin-bottom:.5rem;overflow:hidden">
       <div onclick="toggleOaApiPanel()" style="cursor:pointer;padding:.65rem 1rem;display:flex;align-items:center;gap:.5rem;background:linear-gradient(135deg,rgba(56,189,248,.08),rgba(52,211,153,.04))">
@@ -8677,6 +8696,7 @@ function oaLoadWeightOverrides() {
 }
 function oaSaveWeightOverride(market, weight) {
   var o = oaLoadWeightOverrides();
+  var oldWeight = o[market] ? o[market].weight : null;
   o[market] = { weight: weight, acceptedAt: new Date().toISOString() };
   OA_WEIGHT_CACHE = o;
   try { localStorage.setItem(OA_WEIGHT_STORE_KEY, JSON.stringify(o)); } catch(e){}
@@ -8687,6 +8707,11 @@ function oaSaveWeightOverride(market, weight) {
       method: 'PUT', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({ market_key: market, weight: weight })
     }).catch(function(e){ console.warn('[oaWeight] Oracle sync failed:', e.message); });
+    // ── История — за показване в Настройки: било X, стана Y, кога ──
+    fetch('/api/oa-weight-history', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ market_key: market, old_weight: oldWeight, new_weight: weight })
+    }).catch(function(e){ console.warn('[oaWeight] история неуспешна:', e.message); });
   }
 }
 function oaClearWeightOverride(market) {
@@ -20258,6 +20283,90 @@ var OA_API_BASE = getOaApiBase();
 
 function getOaApiKey() {
   return localStorage.getItem('oa_api_key') || '';
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 📈 История на калибрацията — показва движението на OA теглото за
+// всеки пазар във времето (кога, от какво на какво), плюс текущата
+// стойност. Дърпа от /api/oa-weight-history (Oracle).
+// ═══════════════════════════════════════════════════════════════
+var WH_BLEND_LABELS = {
+  'ft1x2': 'FT 1X2 (Дом/Равен/Гост)',
+  '1x': 'Двоен шанс 1X',
+  'x2': 'Двоен шанс X2',
+  '12': 'Двоен шанс 12',
+  'btts': 'BTTS (Гол-Гол)',
+  'over': 'Over/Under 2.5',
+  'ou05': 'Over/Under 0.5',
+  'ou15': 'Over/Under 1.5',
+  'ou35': 'Over/Under 3.5',
+  'ou45': 'Over/Under 4.5',
+  'home_ou05': 'Дом голове ±0.5',
+  'home_ou15': 'Дом голове ±1.5',
+  'away_ou05': 'Гост голове ±0.5',
+  'away_ou15': 'Гост голове ±1.5',
+  'ht_home': 'HT Дом',
+  'ht_draw': 'HT Равен',
+  'ht_away': 'HT Гост'
+};
+
+function toggleWeightHistoryPanel() {
+  var p = document.getElementById('whPanel');
+  var a = document.getElementById('whArrow');
+  if (!p || !a) return;
+  var shown = p.style.display !== 'none';
+  p.style.display = shown ? 'none' : 'block';
+  a.textContent   = shown ? '▶' : '▼';
+  if (!shown) whPopulateMarketSelect();
+}
+
+function whPopulateMarketSelect() {
+  var sel = document.getElementById('whMarketSel');
+  if (!sel) return;
+  var overrides = oaLoadWeightOverrides();
+  var keys = Object.keys(WH_BLEND_LABELS);
+  sel.innerHTML = '<option value="">— избери пазар —</option>' +
+    keys.map(function(k){
+      var has = overrides[k] ? ' (' + overrides[k].weight + '%)' : ' (40% — по подразбиране)';
+      return '<option value="' + k + '">' + WH_BLEND_LABELS[k] + has + '</option>';
+    }).join('');
+}
+
+function whLoadHistory() {
+  var sel = document.getElementById('whMarketSel');
+  var curBox = document.getElementById('whCurrentBox');
+  var histBox = document.getElementById('whHistoryBox');
+  if (!sel || !sel.value) { curBox.innerHTML = ''; histBox.innerHTML = ''; return; }
+  var marketKey = sel.value;
+
+  var overrides = oaLoadWeightOverrides();
+  var cur = overrides[marketKey];
+  curBox.innerHTML =
+    '<div style="background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.3);border-radius:8px;padding:.55rem">' +
+      '<div style="font-size:.6rem;color:var(--dim)">Текуща активна стойност:</div>' +
+      '<div style="font-size:.85rem;font-weight:700;color:var(--grn)">' + (cur ? cur.weight + '% OA' : '40% OA (по подразбиране, никога не е менена)') + '</div>' +
+      (cur && cur.acceptedAt ? '<div style="font-size:.56rem;color:var(--dim);margin-top:.2rem">от ' + new Date(cur.acceptedAt).toLocaleString('bg-BG') + '</div>' : '') +
+    '</div>';
+
+  histBox.innerHTML = '<div style="font-size:.6rem;color:var(--dim);padding:.4rem 0">Зареждане на история...</div>';
+  fetch('/api/oa-weight-history?market_key=' + encodeURIComponent(marketKey))
+    .then(function(r){ return r.json(); })
+    .then(function(data){
+      var items = (data && data.items) || [];
+      if (!items.length) { histBox.innerHTML = '<div style="font-size:.6rem;color:var(--dim);padding:.4rem 0">Няма записана история на промени за този пазар още.</div>'; return; }
+      histBox.innerHTML = '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.4rem">История на промените (най-нови първо):</div>' +
+        items.map(function(it){
+          var when = it.changed_at ? new Date(it.changed_at).toLocaleString('bg-BG') : '';
+          var oldW = it.old_weight != null ? it.old_weight + '%' : '40% (по подразбиране)';
+          return '<div style="background:#070d16;border-radius:6px;padding:.4rem .6rem;margin-bottom:.3rem;font-size:.6rem">' +
+            '<span style="color:var(--dim)">' + oldW + '</span> → <b style="color:var(--acc)">' + it.new_weight + '%</b>' +
+            '<div style="color:var(--dim);font-size:.55rem;margin-top:.1rem">' + when + '</div>' +
+          '</div>';
+        }).join('');
+    })
+    .catch(function(e){
+      histBox.innerHTML = '<div style="font-size:.6rem;color:var(--red)">⚠ Грешка при зареждане: ' + e.message + '</div>';
+    });
 }
 
 function toggleOaApiPanel() {
