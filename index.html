@@ -3593,6 +3593,22 @@ input::placeholder, textarea::placeholder {
     <!-- Results -->
     <div id="btResults"></div>
 
+    <!-- ═══ ✅ Мигновена засечка от 2 места — без да чакаш Gemini ═══ -->
+    <div id="btCrossCheckBox" style="margin-top:.6rem"></div>
+
+    <!-- ═══ 🤖 Провери с Gemini — праща конфигурацията (пазар, филтри,
+         тежести на модела) + извадка от реалните залози, за независима
+         проверка дали изчисленията са логически коректни. ═══ -->
+    <div style="background:#07101f;border:1px solid rgba(167,139,250,.25);border-radius:9px;padding:.7rem;margin-top:.8rem">
+      <div style="font-size:.62rem;color:var(--pur);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.5rem">🤖 Провери с Gemini</div>
+      <div style="font-size:.58rem;color:var(--dim);margin-bottom:.6rem;line-height:1.5">
+        Праща на Gemini твоите точни настройки (пазар, филтри, вероятностен извор, тегло на модела) + засечката от 2 места + извадка от реалните резултати, за да провери дали изчисленията са логически коректни.
+      </div>
+      <textarea id="btGeminiQuery" rows="2" placeholder="По подразбиране: 'Провери дали изчисленията са верни с тези настройки'" style="width:100%;margin-bottom:.5rem"></textarea>
+      <button class="btn btn-p btn-action" onclick="btAskGemini()" style="width:100%">🤖 Провери с Gemini</button>
+      <div id="btGeminiResult" style="display:none;margin-top:.7rem;background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.7rem;font-size:.66rem;line-height:1.6"></div>
+    </div>
+
   </div>
 </div>
 
@@ -8813,6 +8829,7 @@ function btRecompute() {
   BT_LAST_RESULT = R;
   btRenderResults(R);
   btRenderFilters();  // refresh bet count
+  if (typeof btRenderCrossCheck === 'function') btRenderCrossCheck(R);
   var sum = document.getElementById('btSummary');
   if (sum) sum.textContent = R.all.n + ' bets · ' + (R.all.u >= 0 ? '+' : '') + R.all.u.toFixed(1) + 'u';
 }
@@ -26428,6 +26445,189 @@ function fxBuildTopMarkets() {
 }
 
 
+
+// ── Backtester: изпраща ТОЧНАТА конфигурация + извадка от реалните
+// резултати на Gemini, за независима проверка на изчисленията. ──
+// ── Засечка от 2 независими места: R.all (предагрегирания резултат) срещу
+// прясно преизчислено директно от R.bets — хваща евентуален бъг в самата
+// агрегация, не само грешка във формулите. Извиква се и от btRecompute()
+// (мигновен визуален бадж) и от btAskGemini() (праща се на Gemini). ──
+function btComputeCrossCheck(R) {
+  var indN = R.bets.length;
+  var indWins = 0, indPnl = 0, indOddsSum = 0;
+  R.bets.forEach(function(b){ indWins += b.res; indPnl += b.pnl; indOddsSum += b.payOdds; });
+  var indWR = indN ? indWins/indN*100 : 0;
+  var indROI = indN ? indPnl/indN*100 : 0;
+  var indAvgOdds = indN ? indOddsSum/indN : 0;
+  return {
+    място1_показаноВПриложението: {
+      бройЗалози: R.all.n, победи: R.all.w, winRate: +R.all.wr.toFixed(2),
+      печалба: +R.all.u.toFixed(2), roi: +R.all.roi.toFixed(2), среденКоефициент: +R.all.ao.toFixed(2)
+    },
+    място2_независимоПреизчисленоОтСуровитеЗалози: {
+      бройЗалози: indN, победи: indWins, winRate: +indWR.toFixed(2),
+      печалба: +indPnl.toFixed(2), roi: +indROI.toFixed(2), среденКоефициент: +indAvgOdds.toFixed(2)
+    },
+    съвпадат: (R.all.n === indN && Math.abs(R.all.u - indPnl) < 0.01)
+  };
+}
+
+function btRenderCrossCheck(R) {
+  var box = document.getElementById('btCrossCheckBox');
+  if (!box) return;
+  if (!R || !R.all || R.all.n === 0) { box.innerHTML = ''; return; }
+  var cc = btComputeCrossCheck(R);
+  var ok = cc.съвпадат;
+  box.innerHTML =
+    '<div style="background:' + (ok ? 'rgba(52,211,153,.08)' : 'rgba(248,113,113,.1)') + ';border:1px solid ' + (ok ? 'rgba(52,211,153,.3)' : 'rgba(248,113,113,.4)') + ';border-radius:8px;padding:.55rem;font-size:.62rem">' +
+      (ok
+        ? '✅ Засечка от 2 места: <b style="color:var(--grn)">съвпада</b> — ' + cc.място1_показаноВПриложението.бройЗалози + ' залога, ' + (cc.място1_показаноВПриложението.печалба>=0?'+':'') + cc.място1_показаноВПриложението.печалба.toFixed(1) + 'u на двете места'
+        : '⚠️ Засечка от 2 места: <b style="color:#ff6b6b">РАЗМИНАВАНЕ</b> — място1: ' + cc.място1_показаноВПриложението.бройЗалози + ' залога/' + cc.място1_показаноВПриложението.печалба.toFixed(1) + 'u · място2: ' + cc.място2_независимоПреизчисленоОтСуровитеЗалози.бройЗалози + ' залога/' + cc.място2_независимоПреизчисленоОтСуровитеЗалози.печалба.toFixed(1) + 'u') +
+    '</div>';
+}
+
+async function btAskGemini() {
+  var ta = document.getElementById('btGeminiQuery');
+  var res = document.getElementById('btGeminiResult');
+  var question = (ta && ta.value.trim()) || 'Провери дали изчисленията са верни с тези настройки.';
+
+  var key   = localStorage.getItem('xgpro_gemini_key') || '';
+  var model = localStorage.getItem('xgpro_gemini_model') || 'gemini-2.5-flash';
+  if (!key) {
+    if (res) { res.style.display='block'; res.style.color='var(--yel)';
+      res.innerHTML = '⚠ Въведи Gemini API Key в ⚙️ Настройки → 🤖 Gemini AI'; }
+    return;
+  }
+
+  if (!BT_LAST_RESULT || !BT_LAST_RESULT.all || BT_LAST_RESULT.all.n === 0) {
+    if (res) { res.style.display='block'; res.style.color='var(--yel)';
+      res.innerHTML = '⚠ Няма резултати за проверка — качи данни и приложи филтри първо.'; }
+    return;
+  }
+
+  var R = BT_LAST_RESULT;
+  var is1x2 = BT_STATE.market === 'ft1x2' || BT_STATE.market === 'teamgoals';
+
+  // ═══ Засечка от 2 независими места (споделена с мигновения UI бадж) ═══
+  var crossCheck = btComputeCrossCheck(R);
+
+  // ── Точна конфигурация ──
+  var config = {
+    market: BT_STATE.market,
+    settleBy: BT_STATE.settleBy,
+    probSource: BT_STATE.probSource, // 'oa' | 'model'
+    etDraw: BT_STATE.etDraw,
+    hasPinnacleData: Object.keys(BT_STATE.pinMap || {}).length > 0
+  };
+
+  // ── Тегла на модела (само ако е активен 'model' режим) ──
+  if (BT_STATE.probSource === 'model') {
+    var overrides = (typeof oaLoadWeightOverrides === 'function') ? oaLoadWeightOverrides() : {};
+    var weightsUsed = {};
+    (is1x2 ? ['home','away'] : (BT_MARKETS[BT_STATE.market] || {}).sides || []).forEach(function(side){
+      var bk = (typeof btBlendKeyFor === 'function') ? btBlendKeyFor(BT_STATE.market, side) : null;
+      if (bk) weightsUsed[bk] = overrides[bk] ? overrides[bk].weight + '% OA' : '40% OA (по подразбиране)';
+    });
+    config.modelWeights = weightsUsed;
+  }
+
+  // ── Активни филтри (home + away, само включените) ──
+  function activeFilters(f) {
+    var out = {};
+    if (f.probGtOpp) out.probGtOpp = true;
+    if (f.minProbOn) out.minProb = f.minProb;
+    if (f.maxProbOn) out.maxProb = f.maxProb;
+    if (f.minValOn) out.minValue = f.minVal;
+    if (f.maxValOn) out.maxValue = f.maxVal;
+    if (f.oMinOn) out.minOdds = f.oMin;
+    if (f.oMaxOn) out.maxOdds = f.oMax;
+    if (f.progOn) out.maxProgress = f.progMax;
+    if (f.progMinOn) out.minProgress = f.progMin;
+    if (f.predOn) out.predictability = f.preds;
+    return out;
+  }
+  config.filtersHome = activeFilters(BT_STATE.home);
+  if (is1x2) config.filtersAway = activeFilters(BT_STATE.away);
+
+  // ── Агрегирани резултати (точно каквото виждаш на екрана) ──
+  var summary = {
+    totalBets: R.all.n, wins: R.all.w, winRate: +R.all.wr.toFixed(2),
+    profitUnits: +R.all.u.toFixed(2), roiPct: +R.all.roi.toFixed(2),
+    avgOdds: +R.all.ao.toFixed(2), avgValue: +R.all.av.toFixed(2),
+    breakEvenWR: +R.all.be.toFixed(2), maxDrawdown: +R.mdd.toFixed(2)
+  };
+  if (is1x2) {
+    summary.homeSplit = { n: R.H.n, wr: +R.H.wr.toFixed(1), roi: +R.H.roi.toFixed(1) };
+    summary.awaySplit = { n: R.A.n, wr: +R.A.wr.toFixed(1), roi: +R.A.roi.toFixed(1) };
+  }
+
+  // ── Извадка от реалните залози (до 25, за ръчна проверка на PnL логиката) ──
+  var sample = R.bets.slice(0, 25).map(function(b){
+    return {
+      side: b.side, prob: +b.prob.toFixed(2), oddsUsed: b.payOdds,
+      valuePct: +b.value.toFixed(1), result: b.res === 1 ? 'WIN' : 'LOSS', pnl: +b.pnl.toFixed(2)
+    };
+  });
+
+  var prompt = 'Ти си независим одитор на бетинг бектест изчисления. Провери следната конфигурация и резултати за логическа коректност.\n\n' +
+    '=== ФОРМУЛИТЕ, КОИТО СЕ ИЗПОЛЗВАТ ===\n' +
+    '- Value% = (Вероятност/100 × Коефициент − 1) × 100\n' +
+    '- PnL за печеливш залог = Коефициент − 1 (при залог 1 единица)\n' +
+    '- PnL за губещ залог = −1\n' +
+    '- ROI% = Обща печалба / Брой залози × 100\n' +
+    '- Win Rate% = Печеливши / Общо залози × 100\n' +
+    '- Break-even Win Rate% = 100 / Среден коефициент\n' +
+    (config.probSource === 'model'
+      ? '- Вероятността идва от МОДЕЛ (OA blend-нат с Pinnacle implied вероятност, при показаните тегла)\n'
+      : '- Вероятността е чист OA (без Pinnacle blend)\n') +
+    '- Коефициентите за печалба/загуба И за Value% изчислението са от Bet365 (' + config.settleBy + ' odds), НЕ от Pinnacle.\n\n' +
+    '=== КОНФИГУРАЦИЯ ===\n' + JSON.stringify(config, null, 1) + '\n\n' +
+    '=== ЗАСЕЧКА ОТ 2 НЕЗАВИСИМИ МЕСТА (трябва да съвпадат точно) ===\n' + JSON.stringify(crossCheck, null, 1) + '\n\n' +
+    '=== ОБОБЩЕНИ РЕЗУЛТАТИ (показани в приложението) ===\n' + JSON.stringify(summary, null, 1) + '\n\n' +
+    '=== ИЗВАДКА ОТ РЕАЛНИ ЗАЛОЗИ (първите 25 от ' + R.all.n + ') ===\n' + JSON.stringify(sample, null, 1) + '\n\n' +
+    'ЗАЯВКА ОТ ПОТРЕБИТЕЛЯ: "' + question + '"\n\n' +
+    'ИНСТРУКЦИИ:\n' +
+    '- ПЪРВО провери "ЗАСЕЧКА ОТ 2 НЕЗАВИСИМИ МЕСТА" — място1 и място2 трябва да имат ИДЕНТИЧНИ числа. Ако "съвпадат" е false или числата се различават, това е червен флаг — кажи го ясно още в началото.\n' +
+    '- Провери ръчно няколко залога от извадката — Value% и PnL съответстват ли на формулите?\n' +
+    '- Провери дали ROI% = Печалба/Брой залози×100 (напасва ли на показаните числа)?\n' +
+    '- Провери дали Win Rate% съответства на брой печеливши/общо?\n' +
+    '- Отбележи ако филтрите изглеждат нелогични или противоречиви (напр. minValue >= maxValue).\n' +
+    '- Ако всичко е математически коректно и двете места съвпадат, кажи го ясно в началото.\n' +
+    '- Отговаряй кратко и по същество, на български език.\n' +
+    '- Не измисляй числа извън предоставените данни.';
+
+  if (res) { res.style.display='block'; res.style.color='var(--acc)';
+    res.innerHTML = '⏳ Gemini проверява ' + R.all.n + ' залога...'; }
+
+  try {
+    var url = 'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':generateContent?key=' + key;
+    var resp = await fetch(url, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 3000 }
+      })
+    });
+    var data = await resp.json();
+    if (!resp.ok) throw new Error((data.error && data.error.message) || 'HTTP ' + resp.status);
+
+    var txt = '';
+    if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+      var parts = data.candidates[0].content.parts || [];
+      parts.forEach(function(p){ if (p.text) txt += p.text; });
+    }
+    if (!txt) txt = '⚠ Gemini не върна отговор';
+
+    var html = txt
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong style="color:var(--acc)">$1</strong>')
+      .replace(/\n/g, '<br>');
+    if (res) { res.style.color='var(--txt)'; res.innerHTML = html; }
+  } catch(e) {
+    if (res) { res.style.color='var(--red)'; res.innerHTML = '❌ Грешка: ' + e.message; }
+  }
+}
 
 async function fxAskGemini() {
   var ta = document.getElementById('fxAIQuery');
