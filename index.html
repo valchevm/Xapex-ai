@@ -3525,6 +3525,26 @@ input::placeholder, textarea::placeholder {
       <div id="btFileList" style="margin-top:.5rem"></div>
     </div>
 
+    <!-- ═══ Pinnacle (по избор) — за изчисляване с калибрирания Модел ═══ -->
+    <div style="background:#07101f;border:1px solid rgba(56,189,248,.25);border-radius:9px;padding:.7rem;margin-bottom:.7rem">
+      <div style="font-size:.62rem;color:var(--acc);text-transform:uppercase;letter-spacing:.5px;margin-bottom:.5rem">🧠 Pinnacle (по избор) — за твоя калибриран Модел</div>
+      <div style="font-size:.58rem;color:var(--dim);margin-bottom:.6rem;line-height:1.5">
+        Качи и Pinnacle файл (същите мачове по ID) — Backtester-ът ще смята с твоя калибриран Модел (OA blend-нат с Pinnacle implied вероятност, при текущото прието тегло за пазара) вместо чист OA. PnL/value/settle продължават да ползват Bet365 коефициентите от основните файлове.
+      </div>
+      <div id="btPinDrop" onclick="document.getElementById('btPinFileInput').click()"
+        style="border:1.5px dashed rgba(56,189,248,.3);border-radius:10px;padding:.8rem;text-align:center;cursor:pointer;background:#0a1429">
+        <div style="font-size:.68rem;font-weight:600;color:var(--acc)" id="btPinDropText">Избери Pinnacle CSV файл(ове)</div>
+        <input type="file" id="btPinFileInput" accept=".csv" multiple hidden onchange="btOnPickPinnacle(event)">
+      </div>
+      <div id="btPinFileList" style="margin-top:.5rem"></div>
+      <div id="btPinToggleBox" style="display:none;margin-top:.6rem">
+        <div style="display:flex;gap:.4rem">
+          <button id="btPinToggleOA" onclick="btSetProbSource('oa')" style="flex:1;padding:7px 4px;font-size:.66rem;font-weight:600;border-radius:6px;border:none;cursor:pointer">📡 Чист OA</button>
+          <button id="btPinToggleModel" onclick="btSetProbSource('model')" style="flex:1;padding:7px 4px;font-size:.66rem;font-weight:600;border-radius:6px;border:none;cursor:pointer">🧠 Модел (OA+Pinnacle)</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Date period filter -->
     <div id="btMarketBox" style="display:none;background:#07101f;border:1px solid var(--bord);border-radius:9px;padding:.7rem;margin-bottom:.7rem"></div>
 
@@ -3572,13 +3592,6 @@ input::placeholder, textarea::placeholder {
 
     <!-- Results -->
     <div id="btResults"></div>
-
-    <!-- ═══ 🔬 OA Калибрация Монитор ═══
-         Проверява точността на OA вероятностите спрямо реалния FT резултат
-         (само 90 минути, без продължения/дузпи) за текущо заредения пазар.
-         НЕ променя живия blend в calculate() автоматично — само предлага,
-         потребителят изрично приема/отказва. ═══ -->
-    <div id="oaCalibPanel" style="margin-top:1rem"></div>
 
   </div>
 </div>
@@ -8259,7 +8272,9 @@ var BT_STATE = {
   dateFrom: null,
   dateTo: null,
   home: btDefSide(),
-  away: btDefSide()
+  away: btDefSide(),
+  probSource: 'oa',    // 'oa' | 'model' — кой prob/value да ползват filters/settle
+  pinMap: {}           // id + '|' + side → Pinnacle Opening Odds (от отделно качен файл)
 };
 
 function btDefSide(preset) {
@@ -8332,6 +8347,125 @@ function btPeriodRange() {
 function btNum(v) { var n = parseFloat(v); return isNaN(n) ? null : n; }
 
 // ── CSV ingest + merge ──
+// ═══════════════════════════════════════════════════════════════
+// 🧠 PINNACLE → МОДЕЛ (Backtester)
+// Качва се ОТДЕЛЕН Pinnacle файл (същите ID-та). При избор на "Модел"
+// вместо "Чист OA", c.prob/c.value се преизчисляват като OA се
+// blend-ва с Pinnacle implied вероятност при ТЕКУЩОТО прието тегло за
+// съответния пазар — СЪЩАТА формула като в calculate(). PnL/settle
+// продължават да ползват Bet365 (Opening/Closing/Peak от основните
+// файлове) — Pinnacle участва само във вероятността, не в залога.
+// ═══════════════════════════════════════════════════════════════
+function btBlendKeyFor(market, side) {
+  if (market === 'ft1x2') return side === 'home' ? 'ft_home' : side === 'away' ? 'ft_away' : null;
+  if (market === 'dc') return side === '1x' ? '1x' : side === 'x2' ? 'x2' : side === '12' ? '12' : null;
+  if (market === 'over') return 'over'; // линия 2.5
+  if (market === 'btts') return 'btts';
+  if (market === 'teamgoals') return side === 'home' ? 'home_ou05' : side === 'away' ? 'away_ou05' : null;
+  return null; // corners — няма Poisson модел все още
+}
+
+function btOnPickPinnacle(e) {
+  var files = Array.prototype.slice.call(e.target.files || []);
+  if (!files.length) return;
+  document.getElementById('btPinDropText').textContent = 'Обработка...';
+  var pending = files.length;
+  var newMap = Object.assign({}, BT_STATE.pinMap);
+  var fileMeta = [];
+  files.forEach(function(file){
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      try {
+        var rows = btParseCSV(ev.target.result);
+        var n = 0;
+        rows.forEach(function(r){
+          var id = (r.ID || '').trim();
+          var rawOutcome = (r.Outcome || '').toLowerCase().trim();
+          var odds = btNum(r['Opening Odds']);
+          if (!id || !rawOutcome || odds == null) return;
+          // Нормализация на страната — същата логика като главния импорт
+          var sd = rawOutcome;
+          if (sd === 'home' || sd === 'away') { /* остава */ }
+          else if (['1x','dc_1x','home_draw'].indexOf(sd) !== -1) sd = '1x';
+          else if (['x2','dc_x2','draw_away'].indexOf(sd) !== -1) sd = 'x2';
+          else if (['12','dc_12','home_away'].indexOf(sd) !== -1) sd = '12';
+          else if (sd.indexOf('btts') !== -1 || sd === 'yes') sd = 'btts';
+          else if (sd.indexOf('over') !== -1 && sd.indexOf('25') !== -1) sd = 'over';
+          newMap[id + '|' + sd] = odds;
+          n++;
+        });
+        fileMeta.push({ name: file.name, n: n });
+      } catch(err) { console.warn('[btPinnacle] parse fail', file.name, err.message); }
+      pending--;
+      if (pending === 0) {
+        BT_STATE.pinMap = newMap;
+        document.getElementById('btPinDropText').textContent = 'Избери Pinnacle CSV файл(ове)';
+        btRenderPinFiles(fileMeta);
+        var toggleBox = document.getElementById('btPinToggleBox');
+        if (toggleBox) toggleBox.style.display = 'block';
+        btUpdateProbSourceToggle();
+        if (typeof showToast === 'function') showToast('✅ Pinnacle данни заредени — ' + Object.keys(newMap).length + ' записа', 'success');
+      }
+    };
+    reader.readAsText(file);
+  });
+}
+
+var BT_PIN_FILES = [];
+function btRenderPinFiles(newFiles) {
+  BT_PIN_FILES = BT_PIN_FILES.concat(newFiles);
+  var el = document.getElementById('btPinFileList');
+  if (!el) return;
+  el.innerHTML = BT_PIN_FILES.map(function(f){
+    return '<div style="font-size:.58rem;color:var(--dim)">📄 ' + f.name + ' — ' + f.n + ' записа</div>';
+  }).join('');
+}
+
+function btUpdateProbSourceToggle() {
+  var oaBtn = document.getElementById('btPinToggleOA');
+  var modelBtn = document.getElementById('btPinToggleModel');
+  if (!oaBtn || !modelBtn) return;
+  var onOA = BT_STATE.probSource === 'oa';
+  oaBtn.style.cssText = 'flex:1;padding:7px 4px;font-size:.66rem;font-weight:600;border-radius:6px;border:none;cursor:pointer;' +
+    (onOA ? 'background:var(--dim);color:#05101e' : 'background:#0a1429;color:var(--dim)');
+  modelBtn.style.cssText = 'flex:1;padding:7px 4px;font-size:.66rem;font-weight:600;border-radius:6px;border:none;cursor:pointer;' +
+    (!onOA ? 'background:var(--acc);color:#05101e' : 'background:#0a1429;color:var(--dim)');
+}
+
+function btSetProbSource(source) {
+  BT_STATE.probSource = source;
+  btUpdateProbSourceToggle();
+  btApplyProbSource();
+  btRecompute();
+}
+
+// ── Преизчислява c.prob/c.value за ВСИЧКИ кандидати според избрания
+// извор — извиква се при смяна на toggle-а и при ново качване на
+// Pinnacle данни/смяна на пазар (защото тежестта е различна за
+// различните пазари/страни). ──
+function btApplyProbSource() {
+  if (BT_STATE.probSource === 'oa') {
+    BT_STATE.cands.forEach(function(c){
+      c.prob = c.oaProb;
+      c.value = (c.oaProb / 100 * c.opening - 1) * 100;
+      c.usedModel = false;
+    });
+    return;
+  }
+  BT_STATE.cands.forEach(function(c){
+    var blendKey = btBlendKeyFor(BT_STATE.market, c.side);
+    var pinOdds = BT_STATE.pinMap[c.id + '|' + c.side];
+    if (!blendKey || pinOdds == null) { c.prob = c.oaProb; c.value = (c.oaProb / 100 * c.opening - 1) * 100; c.usedModel = false; return; }
+    var overrides = (typeof oaLoadWeightOverrides === 'function') ? oaLoadWeightOverrides() : {};
+    var w = (overrides[blendKey] ? overrides[blendKey].weight : 40) / 100;
+    var pinImplied = 100 / pinOdds;
+    var modelProb = c.oaProb * w + pinImplied * (1 - w);
+    c.prob = modelProb;
+    c.value = (modelProb / 100 * c.opening - 1) * 100;
+    c.usedModel = true;
+  });
+}
+
 function btOnPick(e) {
   if (!e.target.files || !e.target.files.length) return;
   btIngest(Array.from(e.target.files));
@@ -8461,7 +8595,7 @@ async function btIngest(fileList) {
     var opp = (sd === 'home' || sd === 'away') && probMap[id] ? probMap[id][sd === 'home' ? 'away' : 'home'] : null;
     out.push({
       id: id, fixture: r.Fixture || '', date: (r.Kickoff || '').slice(0,10),
-      side: sd, rawOutcome: rawOutcome, prob: prob, opp: (opp == null ? null : opp),
+      side: sd, rawOutcome: rawOutcome, prob: prob, oaProb: prob, opp: (opp == null ? null : opp),
       opening: opening, closing: btNum(r['Closing Odds']), peak: btNum(r['Peak Odds']),
       status: (r.Status || '').trim(), hg: btNum(r['Home Goals']), ag: btNum(r['Away Goals']),
       corners: btNum(r['Corners']),
@@ -8480,6 +8614,7 @@ async function btIngest(fileList) {
 
   BT_STATE.files = BT_STATE.files.concat(meta);
   BT_STATE.cands = BT_STATE.cands.concat(out);
+  if (typeof btApplyProbSource === 'function') btApplyProbSource();
   document.getElementById('btDropText').textContent = 'Choose CSV files';
 
   // Показваме market селектор + period box
@@ -8524,6 +8659,7 @@ function btRenderMarketSelector() {
 
 function btSetMarket(m) {
   BT_STATE.market = m;
+  if (typeof btApplyProbSource === 'function') btApplyProbSource();
   btRenderMarketSelector();
   btRenderFilters();
   btRecompute();
@@ -8564,6 +8700,13 @@ function btRenderFiles() {
 function btClearAll() {
   BT_STATE.files = [];
   BT_STATE.cands = [];
+  BT_STATE.pinMap = {};
+  BT_STATE.probSource = 'oa';
+  BT_PIN_FILES = [];
+  var pinList = document.getElementById('btPinFileList');
+  if (pinList) pinList.innerHTML = '';
+  var pinToggle = document.getElementById('btPinToggleBox');
+  if (pinToggle) pinToggle.style.display = 'none';
   btRenderFiles();
   btRenderFilters();
   btRecompute();
@@ -8672,7 +8815,6 @@ function btRecompute() {
   btRenderFilters();  // refresh bet count
   var sum = document.getElementById('btSummary');
   if (sum) sum.textContent = R.all.n + ' bets · ' + (R.all.u >= 0 ? '+' : '') + R.all.u.toFixed(1) + 'u';
-  if (typeof oaRenderCalibrationPanel === 'function') oaRenderCalibrationPanel();
 }
 
 // ═══════════════════════════════════════════════════════════════
