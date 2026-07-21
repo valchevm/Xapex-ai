@@ -25905,6 +25905,8 @@ function fxRenderPastedCountries() {
       var sigHtml = '';
 
       // ✅ PROMINENT: Top model recommendation (модел-предложен пазар)
+      // "Stats" в надписа изрично отличава тази бърза stats-само оценка
+      // от реалния калибриран Модел (виждан само след ⚡ Изчисли).
       var topMarketHtml = '';
       if (m.topMarket) {
         var tm = m.topMarket;
@@ -25912,10 +25914,10 @@ function fxRenderPastedCountries() {
           '<div style="display:flex;align-items:center;gap:6px;margin-top:4px;' +
           'background:linear-gradient(90deg, ' + tm.col + '22, transparent);' +
           'border-left:3px solid ' + tm.col + ';padding:4px 8px;border-radius:4px">' +
-          '<span style="font-size:.58rem;color:var(--dim);text-transform:uppercase;letter-spacing:.5px">📊 МОДЕЛ:</span>' +
-          '<span style="font-size:.72rem;font-weight:700;color:' + tm.col + '">' +
+          '<span style="font-size:.52rem;color:var(--dim);text-transform:uppercase;letter-spacing:.5px">📊 МОДЕЛ Stats:</span>' +
+          '<span style="font-size:.66rem;font-weight:700;color:' + tm.col + '">' +
             tm.mkt + '</span>' +
-          '<span style="font-size:.65rem;color:' + tm.col + ';opacity:.85">' +
+          '<span style="font-size:.6rem;color:' + tm.col + ';opacity:.85">' +
             Math.round(tm.prob) + '%</span>' +
           (m.modelProbs ? '<span style="font-size:.55rem;color:var(--dim);margin-left:auto">' +
              'xG ' + m.modelProbs.lambdaH.toFixed(2) + '–' + m.modelProbs.lambdaA.toFixed(2) +
