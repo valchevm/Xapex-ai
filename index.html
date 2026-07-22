@@ -6792,7 +6792,13 @@ function openAddLog() {
 
 function confirmAddLog() {
   if (!CC) return;
-  if (S.matches.find(m=>m.id===CC.id)) { alert('Мачът вече е в лога!'); return; }
+  // ✅ CC.id никога не се задава от calculate() — старата проверка
+  // сравняваше undefined===undefined и блокираше всеки запис след
+  // първия. Дедупликираме по отбори+дата вместо това.
+  var dup = (S.matches || []).find(function(m){
+    return m.home === CC.home && m.away === CC.away && m.match_date === CC.match_date;
+  });
+  if (dup) { alert('Мачът вече е в лога!'); return; }
 
   const bets=[];
   MKT_KEYS.forEach(k=>{
@@ -6806,6 +6812,10 @@ function confirmAddLog() {
 
   if (bets.length===0) { alert('Избери поне един пазар!'); return; }
 
+  var newId = Date.now() + Math.floor(Math.random() * 1000);
+  while ((S.matches || []).find(function(m){ return m.id === newId; })) { newId += 1; }
+  CC.id = newId;
+
   CC.bets=bets;
   // Attach entry odds and predicted CLV closing odds to each bet for CLV tracking
   var clvMap = {};
@@ -6817,7 +6827,7 @@ function confirmAddLog() {
     b.predictedClosingOdds = clvR ? parseFloat(clvR.closingOdds.toFixed(2)) : null;
     b.predictedCLV         = clvR ? parseFloat(clvR.expectedCLV.toFixed(2)) : null;
   });
-  const newMatch = Object.assign({},CC,{bets:JSON.parse(JSON.stringify(bets))});
+  const newMatch = Object.assign({},CC,{id:newId,bets:JSON.parse(JSON.stringify(bets))});
   S.matches.push(newMatch);
   saveState();
   supabaseSaveMatch(newMatch);  // async — fire and forget
@@ -7076,8 +7086,27 @@ function saveEditMatch() {
 
 
 function clearAll() {
+  if (!confirm('Изтрий ВСИЧКИ мачове от лога — локално И от Oracle? Не може да се отмени.')) return;
   S.matches=[]; S.lhm=DEF_STATE.lhm; S.lam=DEF_STATE.lam;
   saveState(); renderLog(); renderStats(); updateBadge();
+  oraLogDeleteAll(); // async — трие и от Oracle, за да не се върнат при следващо зареждане
+}
+
+// ── Трие ВСИЧКИ редове от xgpro_log в Oracle — иначе supabaseLoadMatches()
+// (реално Oracle sync) ги издърпва обратно при следващо зареждане на
+// приложението, дори след локално clearAll(). ──
+async function oraLogDeleteAll() {
+  try {
+    var items = await _oraGet('xgpro_log', 'limit=1000');
+    if (!items || !items.length) return;
+    for (var i = 0; i < items.length; i++) {
+      await _oraReq('xgpro_log/' + items[i].id, 'DELETE');
+    }
+    console.log('Oracle: изтрити', items.length, 'реда от xgpro_log');
+    if (typeof showToast === 'function') showToast('✅ Изтрити ' + items.length + ' мача от Oracle', 'success');
+  } catch(e) {
+    console.warn('Oracle: изтриване неуспешно', e.message);
+  }
 }
 
 function clearResult() {
@@ -28956,7 +28985,14 @@ function mwToggleAddLog() {
 function mwConfirmAddLog() {
   var CC = window.LAST_MATCH_CALC;
   if (!CC) return;
-  if (S.matches.find(function(m){ return m.id === CC.id; })) {
+  // ✅ CC.id никога не се задава от calculate() — старата проверка
+  // "m.id === CC.id" сравняваше undefined === undefined и след първия
+  // запис тихо блокираше всеки следващ. Дедупликираме по отбори+дата,
+  // и генерираме РЕАЛЕН уникален ID (същия модел като fxBuildLogEntryFromFixture).
+  var dup = (S.matches || []).find(function(m){
+    return m.home === CC.home && m.away === CC.away && m.match_date === CC.match_date;
+  });
+  if (dup) {
     if (typeof showToast === 'function') showToast('⚠ Мачът вече е в лога!', 'warn'); else alert('Мачът вече е в лога!');
     return;
   }
@@ -28975,6 +29011,10 @@ function mwConfirmAddLog() {
     return;
   }
 
+  var newId = Date.now() + Math.floor(Math.random() * 1000);
+  while ((S.matches || []).find(function(m){ return m.id === newId; })) { newId += 1; }
+  CC.id = newId;
+
   CC.bets = bets;
   var clvMap = {};
   if (CC.clvData) CC.clvData.forEach(function(r){ clvMap[r.key] = r; });
@@ -28985,7 +29025,7 @@ function mwConfirmAddLog() {
     b.predictedClosingOdds = clvR ? parseFloat(clvR.closingOdds.toFixed(2)) : null;
     b.predictedCLV = clvR ? parseFloat(clvR.expectedCLV.toFixed(2)) : null;
   });
-  var newMatch = Object.assign({}, CC, { bets: JSON.parse(JSON.stringify(bets)) });
+  var newMatch = Object.assign({}, CC, { id: newId, bets: JSON.parse(JSON.stringify(bets)) });
   S.matches.push(newMatch);
   saveState();
   supabaseSaveMatch(newMatch);
