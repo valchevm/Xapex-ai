@@ -6680,6 +6680,10 @@ function calculate() {
     var _c = applyCalibration({pH:CC.pH,pD:CC.pD,pA:CC.pA,pO:CC.pO,pU:CC.pU,pB:CC.pB});
     CC.pH=_c.pH; CC.pD=_c.pD; CC.pA=_c.pA;
     CC.pO=_c.pO; CC.pU=_c.pU; CC.pB=_c.pB;
+    // ✅ Прозрачност — старата Platt Scaling система е ОТДЕЛНА от
+    // OA-тегловия blend и го модифицира СЛЕД него, тихо. Без това CC.blendLabel
+    // лъжливо показваше само blend-а, все едно нищо друго не се е случило.
+    CC.blendLabel = (CC.blendLabel || '') + ' + Platt калибрация (стара система, независима от OA теглата)';
     var _f2=function(v){return isNaN(v)?'—':(+v).toFixed(2);};
     CC.fair1=_f2(1/CC.pH); CC.fairX=_f2(1/CC.pD); CC.fair2=_f2(1/CC.pA);
     CC.fairO=_f2(1/CC.pO); CC.fairU=_f2(1/CC.pU); CC.fairB=_f2(1/CC.pB);
@@ -28945,6 +28949,54 @@ function mwClose() {
 // Резултатът се записва И върху самия мач (m.modelProbs/topMarket), за
 // да може публикуването към BetPro да го намери — преди това пращаше
 // само бързия класификатор, а не резултата от Calculate тук. ──
+// ── Gemini анализ директно от работния екран на мача (Fixtures dock) ──
+async function mwAskGemini() {
+  var res = document.getElementById('mwGeminiResult');
+  var CC = window.LAST_MATCH_CALC;
+  if (!CC || !res) return;
+
+  var key   = localStorage.getItem('xgpro_gemini_key') || '';
+  var model = localStorage.getItem('xgpro_gemini_model') || 'gemini-2.5-flash';
+  if (!key) {
+    res.style.display='block'; res.style.color='var(--yel)';
+    res.innerHTML = '⚠ Въведи Gemini API Key в ⚙️ Настройки → 🤖 Gemini AI';
+    return;
+  }
+
+  function gv(id) { var el = document.getElementById(id); return el ? el.value : ''; }
+  var oaLine = gv('oa_home') ? 'OA вероятности: 1=' + gv('oa_home') + '% X=' + gv('oa_draw') + '% 2=' + gv('oa_away') + '%' +
+    (gv('oa_btts') ? ' BTTS=' + gv('oa_btts') + '%' : '') + (gv('oa_o25') ? ' O2.5=' + gv('oa_o25') + '%' : '') : '';
+  var betLine = gv('b1') ? 'Bet365: 1=' + gv('b1') + ' X=' + gv('bx') + ' 2=' + gv('b2') +
+    (gv('bo') ? ' O2.5=' + gv('bo') : '') + (gv('bu') ? ' U2.5=' + gv('bu') : '') : '';
+  var pinLine = gv('pin_home') ? 'Pinnacle: 1=' + gv('pin_home') + ' X=' + gv('pin_draw') + ' 2=' + gv('pin_away') : '';
+  var modelLine = 'Модел (калибриран): 1=' + Math.round(CC.pH*100) + '% X=' + Math.round(CC.pD*100) + '% 2=' + Math.round(CC.pA*100) + '% O2.5=' + Math.round(CC.pO*100) + '% BTTS=' + Math.round(CC.pB*100) + '%';
+
+  var prompt = 'ВАЖНО: Без въведения и поздрави. Започни ДИРЕКТНО с анализа.\n\n' +
+    'МАЧ: ' + (CC.home||'?') + ' (домакин) vs ' + (CC.away||'?') + ' (гост)\n\n' +
+    (oaLine ? oaLine + '\n' : '') +
+    (pinLine ? pinLine + '\n' : '') +
+    (betLine ? betLine + '\n' : '') +
+    modelLine + '\n\n' +
+    'АНАЛИЗ НА БЪЛГАРСКИ:\n' +
+    '1. **Мнение за срещата** — кой отбор има по-добри шансове и защо\n' +
+    '2. **Оценка на модела** — ако OA и калибрирания Модел ЗНАЧИТЕЛНО се разминават, коментирай това изрично — кое изглежда по-правдоподобно и защо\n' +
+    '3. **Най-добър залог** — кой пазар изглежда с реална стойност\n' +
+    '4. **Риск** — какво може да обърне прогнозата\n\n' +
+    'Бъди конкретен с числата. Максимум 300 думи.';
+
+  res.style.display='block'; res.style.color='var(--pur)';
+  res.innerHTML = '⏳ Gemini анализира мача...';
+
+  try {
+    var result = await geminiCall(key, model, prompt, { temperature: 0.3, maxOutputTokens: 2500 });
+    var html = geminiFormat(result.text);
+    res.style.color='var(--txt)';
+    res.innerHTML = '<div style="font-size:.58rem;color:var(--pur);font-weight:600;margin-bottom:.4rem">✨ Gemini ' + result.model + '</div><p>' + html + '</p>';
+  } catch(e) {
+    res.style.color='var(--red)'; res.innerHTML = '❌ ' + e.message;
+  }
+}
+
 // ── Inline "Добави в лог" за Fixtures работния екран — същата логика
 // като openAddLog()/confirmAddLog(), но рендерирана В САМИЯ dock (не
 // скача до далечна карта — запазва fix-а срещу forced scroll). ──
@@ -29068,8 +29120,12 @@ function mwCalc() {
     (best ? '<div class="mw-best">⭐ Най-добра стойност: <strong>' + best[0] + '</strong>' +
       ' — коеф. ' + best[2] + ' (edge ' + (parseFloat(best[1])>0?'+':'') + parseFloat(best[1]).toFixed(1) + '%)</div>' : '') +
     (CC.blendLabel ? '<div class="mw-src">Модел: ' + CC.blendLabel + '</div>' : '') +
-    '<button class="btn btn-sec" style="width:100%;margin-top:.5rem" onclick="mwToggleAddLog()">➕ Добави в лог</button>' +
-    '<div id="mwAddLogPanel" style="display:none;margin-top:.5rem"></div>';
+    '<div style="display:flex;gap:.5rem;margin-top:.5rem">' +
+      '<button class="btn btn-sec" style="flex:1" onclick="mwToggleAddLog()">➕ Добави в лог</button>' +
+      '<button class="btn" style="flex:1;background:linear-gradient(135deg,#a78bfa,#7b61ff);color:#fff;font-weight:600" onclick="mwAskGemini()">✨ Gemini анализ</button>' +
+    '</div>' +
+    '<div id="mwAddLogPanel" style="display:none;margin-top:.5rem"></div>' +
+    '<div id="mwGeminiResult" style="display:none;margin-top:.5rem;background:#0a1429;border:1px solid rgba(167,139,250,.25);border-radius:8px;padding:.6rem;font-size:.66rem;line-height:1.6"></div>';
 
   if (box) { box.innerHTML = html; box.style.display = 'block'; }
 
