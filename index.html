@@ -6292,12 +6292,12 @@ function calculate() {
 
     // ✅ OA blend за пазарите без Pinnacle вход — Poisson base срещу OA,
     // тегло от getOAWeight() (същия механизъм като BTTS/1X2/O25).
-    // Без прието тегло за конкретен пазар → по подразбиране 40%.
+    // Без прието тегло за конкретен пазар → по подразбиране 65% (Poisson ролята е занижена — виж бележката горе).
     (function(){
       var _oaB = (typeof OA_PROBS !== 'undefined') ? OA_PROBS : {};
       function blendMkt(baseP, oaVal, marketKey) {
         if (oaVal == null) return baseP;
-        var w = clamp(getOAWeight(marketKey, 40), 0, 100) / 100;
+        var w = clamp(getOAWeight(marketKey, 65), 0, 100) / 100;
         return clamp(baseP * (1 - w) + (oaVal / 100) * w, 0.01, 0.99);
       }
       CC.pO15 = blendMkt(CC.pO15, _oaB.o15, 'ou15'); CC.pU15 = 1 - CC.pO15;
@@ -6564,9 +6564,9 @@ function calculate() {
     if (hasOA && hasPin) {
       // ✅ Три ОТДЕЛНИ тегла (от OA Калибрация Монитора) — Дом/Равен/Гост
       // могат да имат различна OA точност, затова различно тегло.
-      var oaWHome = clamp(getOAWeight('ft_home', 40), 0, 100) / 100;
-      var oaWDraw = clamp(getOAWeight('ft_draw', 40), 0, 100) / 100;
-      var oaWAway = clamp(getOAWeight('ft_away', 40), 0, 100) / 100;
+      var oaWHome = clamp(getOAWeight('ft_home', 65), 0, 100) / 100;
+      var oaWDraw = clamp(getOAWeight('ft_draw', 65), 0, 100) / 100;
+      var oaWAway = clamp(getOAWeight('ft_away', 65), 0, 100) / 100;
       wBase = 0;
       wOAH = oaWHome; wPinH = 1 - oaWHome;
       wOAD = oaWDraw; wPinD = 1 - oaWDraw;
@@ -6628,11 +6628,11 @@ function calculate() {
     // ✅ Тук няма отделен "Pinnacle BTTS" вход в приложението — базата
     // за сравнение е Poisson/xG стойността на CC.pB ПРЕДИ OA override-а
     // (запазена долу като pB_base). getOAWeight('btts') контролира колко
-    // тежи OA спрямо тази база (по подразбиране 40%, като преди).
+    // тежи OA спрямо тази база (по подразбиране 65%).
     var pB_base = CC.pB;
     if (hasOA && oa.btts) {
       var pB_oa = oa.btts / 100;
-      var oaWBTTS = clamp(getOAWeight('btts', 40), 0, 100) / 100;
+      var oaWBTTS = clamp(getOAWeight('btts', 65), 0, 100) / 100;
       CC.pB = clamp(pB_base * (1 - oaWBTTS) + pB_oa * oaWBTTS, 0.10, 0.88);
       CC.fairB = fmt(1/CC.pB);
       CC.eBTTS = fmt((CC.pB - 1/parseFloat(CC.bb||1.75))*100, 1);
@@ -6675,26 +6675,10 @@ function calculate() {
     CC.blendLabel = blendParts.join(' · ');
   })();
 
-    // ── Калибрация (Platt Scaling) ──
-  if (typeof CALIB_PARAMS !== 'undefined' && CALIB_PARAMS.lastRun) {
-    var _c = applyCalibration({pH:CC.pH,pD:CC.pD,pA:CC.pA,pO:CC.pO,pU:CC.pU,pB:CC.pB});
-    CC.pH=_c.pH; CC.pD=_c.pD; CC.pA=_c.pA;
-    CC.pO=_c.pO; CC.pU=_c.pU; CC.pB=_c.pB;
-    // ✅ Прозрачност — старата Platt Scaling система е ОТДЕЛНА от
-    // OA-тегловия blend и го модифицира СЛЕД него, тихо. Без това CC.blendLabel
-    // лъжливо показваше само blend-а, все едно нищо друго не се е случило.
-    CC.blendLabel = (CC.blendLabel || '') + ' + Platt калибрация (стара система, независима от OA теглата)';
-    var _f2=function(v){return isNaN(v)?'—':(+v).toFixed(2);};
-    CC.fair1=_f2(1/CC.pH); CC.fairX=_f2(1/CC.pD); CC.fair2=_f2(1/CC.pA);
-    CC.fairO=_f2(1/CC.pO); CC.fairU=_f2(1/CC.pU); CC.fairB=_f2(1/CC.pB);
-    CC.e1=_f2((CC.pH-1/parseFloat(CC.b1||1.9))*100);
-    CC.eX=_f2((CC.pD-1/parseFloat(CC.bx||3.6))*100);
-    CC.e2=_f2((CC.pA-1/parseFloat(CC.b2||3.8))*100);
-    CC.eO=_f2((CC.pO-1/parseFloat(CC.bo||1.88))*100);
-    CC.eU=_f2((CC.pU-1/parseFloat(CC.bu||2.10))*100);
-    CC.eBTTS=_f2((CC.pB-1/parseFloat(CC.bb||1.75))*100);
-    CC.calibrated=true;
-  }
+  // ✅ Старата Platt Scaling калибрация е ПРЕМАХНАТА (по заявка) — тя
+  // тихо модифицираше OA-тегловия blend СЛЕД като се изчисли, независимо
+  // от новата калибрационна система. Сега blend резултатът по-горе е
+  // финален, без допълнителна невидима трансформация.
 
   // ✅ AUTO-APPLY H2H/Form ако е подадена ПРЕДИ Изчисли
   // (parseAndApplyH2H запазва H2H_DATA.h2hForm/homeForm/awayForm)
@@ -9025,7 +9009,7 @@ function oaCalcCalibration() {
 function oaSuggestWeight(oaBss, baseWeight, opts) {
   if (oaBss == null) return null;
   opts = opts || {};
-  var base = baseWeight != null ? baseWeight : 40;
+  var base = baseWeight != null ? baseWeight : 65;
   var n = opts.n;
   // ── Разлика спрямо референтен BSS (обикновено на текущия Модел) —
   // ако няма подаден референтен BSS, третираме 0 като неутрална база
@@ -9072,7 +9056,7 @@ function oaRenderCalibrationPanel() {
 
   var overrides = oaLoadWeightOverrides();
   var existing = overrides[BT_STATE.market];
-  var currentWeight = existing ? existing.weight : 40;
+  var currentWeight = existing ? existing.weight : 65;
   var sugg = oaSuggestWeight(calib.bss, currentWeight, { n: calib.n });
   var pendingChange = sugg.suggested !== currentWeight;
 
@@ -11194,7 +11178,7 @@ function pcUploadAnalyze() {
     var blendKey = pcMarketToBlendKey(mktKey);
     var overrides = oaLoadWeightOverrides();
     var existing = blendKey ? overrides[blendKey] : null;
-    var currentWeight = existing ? existing.weight : 40;
+    var currentWeight = existing ? existing.weight : 65;
     var w = currentWeight / 100;
 
     var oaPairs = [], modelPairs = [];
@@ -11483,7 +11467,7 @@ function pcRender() {
       if (!blendKey) return '';
       var overrides = oaLoadWeightOverrides();
       var existing = overrides[blendKey];
-      var currentWeight = existing ? existing.weight : 40;
+      var currentWeight = existing ? existing.weight : 65;
       // ✅ Директна разлика в Brier — вече всички пазари са binary,
       // включително разделените Дом/Равен/Гост. Доверието расте с n,
       // за да не мести с фиксирана крачка при малка извадка.
@@ -18558,10 +18542,9 @@ async function cloudUserMetaLoad() {
           if (meta.s_rho !== undefined) S.rho = meta.s_rho;
           if (typeof saveLocalMeta === 'function') saveLocalMeta();
         }
-        if (meta.calib && typeof CALIB_PARAMS !== 'undefined') {
-          CALIB_PARAMS = Object.assign(CALIB_PARAMS, meta.calib);
-          try { localStorage.setItem('xgpro_calib_params', JSON.stringify(CALIB_PARAMS)); } catch(e){}
-        }
+        // ✅ Старата Platt калибрация е ПРЕМАХНАТА — вече НЕ я връщаме
+        // обратно от Oracle sync-а, дори да е налична там от преди.
+        try { localStorage.removeItem('xgpro_calib_params'); } catch(e){}
         try { localStorage.setItem('xgpro_user_meta_ts', String(cloudTs)); } catch(e){}
         console.log('[userMeta] ✓ заредена от Oracle (по-нова)');
         return { loaded: true, fromCloud: true };
@@ -19752,6 +19735,13 @@ function calibratePoisson(allFixtures) {
 
 // ── Главна функция за калибрация ──
 async function runCalibration() {
+  // ✅ ПРЕМАХНАТО (по заявка) — тази Platt Scaling калибрация вече не се
+  // прилага никъде в calculate(). Заменена е от OA-тегловата система
+  // (⚙️ Настройки → 📈 История на калибрацията).
+  alert('Тази калибрация е премахната — вече не влияе на модела. Ползвай OA-тегловата система (Настройки → История на калибрацията) вместо нея.');
+  return;
+}
+async function runCalibration_DEPRECATED() {
   var btn  = document.getElementById('calibRunBtn');
   var prog = document.getElementById('calibProgress');
   var bar  = document.getElementById('calibBar');
@@ -20215,6 +20205,11 @@ function setCalibTrainingDays(days) {
 }
 
 async function runCalibrationFromTraining() {
+  // ✅ ПРЕМАХНАТО (по заявка) — виж runCalibration() по-горе.
+  alert('Тази калибрация е премахната — вече не влияе на модела. Ползвай OA-тегловата система (Настройки → История на калибрацията) вместо нея.');
+  return;
+}
+async function runCalibrationFromTraining_DEPRECATED() {
   var res = document.getElementById('calibTrainingResult');
   if (res) { res.style.display='block'; res.style.color='var(--acc)';
     res.textContent='⏳ Зареждане на данни...'; }
@@ -20757,7 +20752,7 @@ function whPopulateMarketSelect() {
   var keys = Object.keys(WH_BLEND_LABELS);
   sel.innerHTML = '<option value="">— избери пазар —</option>' +
     keys.map(function(k){
-      var has = overrides[k] ? ' (' + overrides[k].weight + '% OA)' : ' (40% OA — по подразбиране)';
+      var has = overrides[k] ? ' (' + overrides[k].weight + '% OA)' : ' (65% OA — по подразбиране)';
       return '<option value="' + k + '">' + WH_BLEND_LABELS[k] + has + '</option>';
     }).join('');
 }
@@ -20772,7 +20767,7 @@ function whLoadHistory() {
 
   var overrides = oaLoadWeightOverrides();
   var cur = overrides[marketKey];
-  var curWeight = cur ? cur.weight : 40;
+  var curWeight = cur ? cur.weight : 65;
   var curMeta = cur && cur.meta;
   curBox.innerHTML =
     '<div style="background:rgba(52,211,153,.08);border:1px solid rgba(52,211,153,.3);border-radius:8px;padding:.6rem">' +
@@ -20794,7 +20789,7 @@ function whLoadHistory() {
       histBox.innerHTML = '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.4rem">История на промените (най-нови първо):</div>' +
         items.map(function(it){
           var when = it.changed_at ? new Date(it.changed_at).toLocaleString('bg-BG') : '';
-          var oldW = it.old_weight != null ? it.old_weight + '% OA' : '40% OA (по подразбиране)';
+          var oldW = it.old_weight != null ? it.old_weight + '% OA' : '65% OA (по подразбиране)';
           var newW = it.new_weight;
           return '<div style="background:#070d16;border-radius:6px;padding:.45rem .6rem;margin-bottom:.3rem;font-size:.6rem">' +
             '<div>' + oldW + ' <span style="color:var(--dim)">(т.е. ' + (it.old_weight!=null?(100-it.old_weight):60) + '% Pinnacle)</span> → <b style="color:var(--acc)">' + newW + '% OA</b> <span style="color:var(--dim)">(' + (100-newW) + '% Pinnacle)</span></div>' +
@@ -23328,19 +23323,21 @@ function clearTrainingPaste() {
   if (res) { res.style.display='none'; res.innerHTML=''; }
 }
 
-// ── Зареждане на запазени параметри при старт ──
+// ── Старата Platt калибрация е ПРЕМАХНАТА (по заявка) — вместо да
+// зареждаме стари запазени параметри при старт, ги трием изцяло, за
+// да не остане никакъв стар запис, дори неприложим. ──
 function loadCalibParams() {
   try {
-    var saved = localStorage.getItem('xgpro_calib_params');
-    if (saved) {
-      var parsed = JSON.parse(saved);
-      CALIB_PARAMS = Object.assign(CALIB_PARAMS, parsed);
-      if (CALIB_PARAMS.lastRun) {
-        console.log('Калибрация заредена:', new Date(CALIB_PARAMS.lastRun).toLocaleDateString('bg-BG'),
-                    CALIB_PARAMS.totalMatches + ' мача');
-      }
+    if (localStorage.getItem('xgpro_calib_params')) {
+      localStorage.removeItem('xgpro_calib_params');
+      console.log('Старата Platt калибрация е изтрита от localStorage.');
     }
-  } catch(e) { console.log('Calib load error:', e.message); }
+  } catch(e) {}
+  CALIB_PARAMS = {
+    home: {a:1,b:0,n:0}, draw: {a:1,b:0,n:0}, away: {a:1,b:0,n:0},
+    over25: {a:1,b:0,n:0}, under25: {a:1,b:0,n:0}, btts: {a:1,b:0,n:0},
+    lastRun: null, totalMatches: 0
+  };
 }
 
 
@@ -26795,7 +26792,7 @@ async function btAskGemini() {
     var weightsUsed = {};
     (is1x2 ? ['home','away'] : (BT_MARKETS[BT_STATE.market] || {}).sides || []).forEach(function(side){
       var bk = (typeof btBlendKeyFor === 'function') ? btBlendKeyFor(BT_STATE.market, side) : null;
-      if (bk) weightsUsed[bk] = overrides[bk] ? overrides[bk].weight + '% OA' : '40% OA (по подразбиране)';
+      if (bk) weightsUsed[bk] = overrides[bk] ? overrides[bk].weight + '% OA' : '65% OA (по подразбиране)';
     });
     config.modelWeights = weightsUsed;
   }
