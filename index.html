@@ -28916,6 +28916,87 @@ function mwClose() {
 // Резултатът се записва И върху самия мач (m.modelProbs/topMarket), за
 // да може публикуването към BetPro да го намери — преди това пращаше
 // само бързия класификатор, а не резултата от Calculate тук. ──
+// ── Inline "Добави в лог" за Fixtures работния екран — същата логика
+// като openAddLog()/confirmAddLog(), но рендерирана В САМИЯ dock (не
+// скача до далечна карта — запазва fix-а срещу forced scroll). ──
+function mwToggleAddLog() {
+  var panel = document.getElementById('mwAddLogPanel');
+  if (!panel) return;
+  var shown = panel.style.display !== 'none';
+  if (shown) { panel.style.display = 'none'; return; }
+
+  var CC = window.LAST_MATCH_CALC;
+  if (!CC) return;
+  var oddsMap = {'1':CC.b1,'X':CC.bx,'2':CC.b2,'O2.5':CC.bo,'U2.5':CC.bu,'BTTS':CC.bb};
+  var edgeVals = {'1':parseFloat(CC.e1),'X':parseFloat(CC.eX),'2':parseFloat(CC.e2),
+                   'O2.5':parseFloat(CC.eO),'U2.5':parseFloat(CC.eU),'BTTS':parseFloat(CC.eBTTS)};
+
+  var html = '';
+  MKT_KEYS.forEach(function(k){
+    var ev = edgeVals[k];
+    var eColor = ev>0?'var(--grn)':'var(--red)';
+    var mlOn = !!(ML_MODELS['ou25'] || ML_MODELS['1x2']);
+    var checked = ev > (mlOn ? 6 : 4) ? 'checked' : '';
+    html +=
+      '<div style="background:#07101f;border:1px solid var(--bord);border-radius:9px;padding:.6rem;margin-bottom:.4rem">' +
+        '<label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:.4rem;font-size:.72rem;color:var(--txt)">' +
+          '<input type="checkbox" id="mw_chk_' + k + '" value="' + k + '" ' + checked + ' style="width:14px;height:14px;cursor:pointer;accent-color:var(--acc)">' +
+          '<span style="flex:1">' + MKT_LABELS[k] + '</span>' +
+          '<span style="font-size:.62rem;color:' + eColor + ';font-weight:700">' + (ev>0?'+':'') + ev.toFixed(1) + '%</span>' +
+        '</label>' +
+        '<input type="number" id="mw_odds_' + k + '" step=".01" placeholder="Коеф." value="' + Number(oddsMap[k]).toFixed(2) + '" ' +
+          'style="width:100%;padding:6px;background:#0a1429;border:1px solid var(--bord);border-radius:6px;color:var(--txt);font-family:var(--mono);font-size:.8rem;text-align:center">' +
+      '</div>';
+  });
+  html += '<button class="btn btn-p btn-action" style="width:100%" onclick="mwConfirmAddLog()">✓ Запиши</button>';
+  panel.innerHTML = html;
+  panel.style.display = 'block';
+}
+
+function mwConfirmAddLog() {
+  var CC = window.LAST_MATCH_CALC;
+  if (!CC) return;
+  if (S.matches.find(function(m){ return m.id === CC.id; })) {
+    if (typeof showToast === 'function') showToast('⚠ Мачът вече е в лога!', 'warn'); else alert('Мачът вече е в лога!');
+    return;
+  }
+
+  var bets = [];
+  MKT_KEYS.forEach(function(k){
+    var chk = document.getElementById('mw_chk_' + k);
+    if (chk && chk.checked) {
+      var oddsEl = document.getElementById('mw_odds_' + k);
+      var odds = parseFloat(oddsEl ? oddsEl.value : 0);
+      bets.push({ market: k, odds: isNaN(odds) ? null : odds, correct: null, pnl: null });
+    }
+  });
+  if (bets.length === 0) {
+    if (typeof showToast === 'function') showToast('⚠ Избери поне един пазар!', 'warn'); else alert('Избери поне един пазар!');
+    return;
+  }
+
+  CC.bets = bets;
+  var clvMap = {};
+  if (CC.clvData) CC.clvData.forEach(function(r){ clvMap[r.key] = r; });
+  bets.forEach(function(b){
+    b.entryOdds = b.odds;
+    b.closingOdds = null;
+    var clvR = clvMap[b.market];
+    b.predictedClosingOdds = clvR ? parseFloat(clvR.closingOdds.toFixed(2)) : null;
+    b.predictedCLV = clvR ? parseFloat(clvR.expectedCLV.toFixed(2)) : null;
+  });
+  var newMatch = Object.assign({}, CC, { bets: JSON.parse(JSON.stringify(bets)) });
+  S.matches.push(newMatch);
+  saveState();
+  supabaseSaveMatch(newMatch);
+  renderLog();
+  renderStats();
+
+  var panel = document.getElementById('mwAddLogPanel');
+  if (panel) panel.style.display = 'none';
+  if (typeof showToast === 'function') showToast('✅ Добавено в лога (' + bets.length + ' пазара)', 'success');
+}
+
 function mwCalc() {
   if (!MW_ACTIVE_KEY) return;
   mwCapture(MW_ACTIVE_KEY);
@@ -28946,7 +29027,9 @@ function mwCalc() {
     '</div>' +
     (best ? '<div class="mw-best">⭐ Най-добра стойност: <strong>' + best[0] + '</strong>' +
       ' — коеф. ' + best[2] + ' (edge ' + (parseFloat(best[1])>0?'+':'') + parseFloat(best[1]).toFixed(1) + '%)</div>' : '') +
-    (CC.blendLabel ? '<div class="mw-src">Модел: ' + CC.blendLabel + '</div>' : '');
+    (CC.blendLabel ? '<div class="mw-src">Модел: ' + CC.blendLabel + '</div>' : '') +
+    '<button class="btn btn-sec" style="width:100%;margin-top:.5rem" onclick="mwToggleAddLog()">➕ Добави в лог</button>' +
+    '<div id="mwAddLogPanel" style="display:none;margin-top:.5rem"></div>';
 
   if (box) { box.innerHTML = html; box.style.display = 'block'; }
 
