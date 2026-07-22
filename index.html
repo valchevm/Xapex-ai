@@ -28950,7 +28950,12 @@ function mwClose() {
 async function mwAskGemini() {
   var res = document.getElementById('mwGeminiResult');
   var CC = window.LAST_MATCH_CALC;
-  if (!CC || !res) return;
+  if (!res) { console.warn('[mwAskGemini] mwGeminiResult елементът липсва в DOM-а'); return; }
+  if (!CC) {
+    res.style.display='block'; res.style.color='var(--yel)';
+    res.innerHTML = '⚠ Няма изчислен резултат — натисни "⚡ Изчисли вероятността" първо.';
+    return;
+  }
 
   var key   = localStorage.getItem('xgpro_gemini_key') || '';
   var model = localStorage.getItem('xgpro_gemini_model') || 'gemini-2.5-flash';
