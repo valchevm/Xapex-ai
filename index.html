@@ -6626,7 +6626,7 @@ function calculate() {
 
     // ✅ 'over' пазар може да има собствено прието OA тегло; ако няма
     // override, пада обратно към същото тегло като 1X2 (старо поведение).
-    var oaWOU = clamp(getOAWeight('over', wOA * 100), 0, 100) / 100;
+    var oaWOU = clamp(getOAWeight('over', 65), 0, 100) / 100;
     var wBaseOU = wBase, wPinOU = pinOU ? (1 - oaWOU) : 0, wOAOU = (hasOA && oa.o25) ? oaWOU : 0;
     var totOU   = wBaseOU + wPinOU + wOAOU;
     if (totOU > 0) {
@@ -6669,7 +6669,7 @@ function calculate() {
       ['1x','x2','12'].forEach(function(key){
         var derived = clamp(dcDerived[key], 0.02, 0.98);
         var oaVal = (hasOA && dcOA[key] != null) ? dcOA[key] / 100 : null;
-        var w = clamp(getOAWeight(key, wOA * 100), 0, 100) / 100;
+        var w = clamp(getOAWeight(key, 65), 0, 100) / 100;
         var finalP = (oaVal != null) ? clamp(derived * (1 - w) + oaVal * w, 0.02, 0.98) : derived;
         CC[ccProbKey[key]] = finalP;
         CC[ccFairKey[key]] = fmt(1/finalP);
@@ -6678,11 +6678,18 @@ function calculate() {
 
     // ── Запазваме blend информацията за показване ──
     CC.blendSources = sources;
+    // ✅ wOA/wPin (единствено число) вече не съществуват — 1X2 blend-ът
+    // е разделен на три независими тегла по изход (Дом/Равен/Гост).
+    // За показване използваме средното от трите, closest single-number
+    // приближение на "колко тежи OA общо" за информационни цели.
+    var wOA = (typeof wOAH === 'number' && typeof wOAD === 'number' && typeof wOAA === 'number')
+      ? (wOAH + wOAD + wOAA) / 3 : 0.65;
+    var wPin = 1 - wBase - wOA;
     CC.blendWeights = { base: (wBase*100).toFixed(0)+'%', pin: (wPin*100).toFixed(0)+'%', oa: (wOA*100).toFixed(0)+'%' };
 
     // ── Обновяваме ML indicator текста (честно: какво реално формира вероятността) ──
     var blendParts = [];
-    if (hasOA && hasPin)      blendParts.push(Math.round(wPin*100) + '% Pinnacle + ' + Math.round(wOA*100) + '% OA');
+    if (hasOA && hasPin)      blendParts.push(Math.round(wPin*100) + '% Pinnacle + ' + Math.round(wOA*100) + '% OA (средно по изход)');
     else if (hasOA)           blendParts.push('само OA');
     else if (hasPin)          blendParts.push('само Pinnacle');
     else                      blendParts.push('Poisson/xG модел');
