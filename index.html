@@ -29410,6 +29410,17 @@ function mwRenderAllBadges() {
 window.MW = { open: mwOpen, close: mwClose, toggle: mwToggleSection, collapse: mwCollapseSection, calc: mwCalc, renderBadges: mwRenderAllBadges };
 window.fxOpenMatchWorkspace = mwOpen;
 
+// ✅ КРИТИЧНО: тези функции се викат ДИРЕКТНО от onclick/onchange HTML
+// атрибути, които изпълняват в ГЛОБАЛЕН scope — а целият този модул е
+// в IIFE. Без изричното излагане тук, извикването им от HTML тихо
+// хвърля "не е дефинирано" и НИЩО не се случва при клик — точно
+// проблемът, който разследвахме в няколко предишни отговора.
+window.mwCalc = mwCalc;
+window.mwToggleAddLog = mwToggleAddLog;
+window.mwConfirmAddLog = mwConfirmAddLog;
+window.mwAskGemini = mwAskGemini;
+window.fxImportFullCsv = fxImportFullCsv;
+
 // След всяко (пре)рендиране на списъка (fxToggleCountry/fxApplySearch и т.н.)
 // презалепваме запазените badges.
 var _mwListEl = null;
