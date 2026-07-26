@@ -29034,14 +29034,24 @@ function mwFinishOpen(key, rowEl, m, dock) {
   if (titleEl) titleEl.textContent = '✏️ ' + (m.home||'') + ' vs ' + (m.away||'');
 
   var resBox = document.getElementById('mwResultBox');
+  var hasSavedResult = !!(MW_STATE[key] && MW_STATE[key].resultHtml);
   if (resBox) {
-    if (MW_STATE[key] && MW_STATE[key].resultHtml) {
+    if (hasSavedResult) {
       resBox.innerHTML = MW_STATE[key].resultHtml;
       resBox.style.display = 'block';
     } else {
       resBox.style.display = 'none';
       resBox.innerHTML = '';
     }
+  }
+
+  // ✅ Автоматично изчисление — САМО за мачове с пълен CSV импорт
+  // (всичко вече попълнено: статистика + OA + коефициенти), при
+  // ПЪРВОТО отваряне (няма запазен резултат още). Ръчно въведени/
+  // поставени мачове продължават да изискват натискане на бутона,
+  // защото данните може да са непълни докато въвеждаш.
+  if (m._fullCsvImport && !hasSavedResult) {
+    setTimeout(function(){ if (typeof mwCalc === 'function') mwCalc(); }, 50);
   }
 
   dock.scrollIntoView({behavior:'smooth', block:'nearest'});
