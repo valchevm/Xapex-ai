@@ -28644,7 +28644,14 @@ function fxImportFullCsv(event) {
       }
 
       mwSave();
-      if (typeof fxRenderBrowser === 'function') fxRenderBrowser();
+      // ✅ Правилният persistence механизъм — localStorage + Oracle sync +
+      // публикуване. Без това импортираните мачове изчезват при
+      // затваряне/презареждане (бяха само в паметта).
+      if (typeof persistFxPasted === 'function') persistFxPasted();
+      // ✅ Правилното име на render функцията (fxRenderBrowser никога не е
+      // съществувала — грешно предположено име, затова списъкът никога не
+      // се опресняваше след импорт).
+      if (typeof fxRenderPastedCountries === 'function') fxRenderPastedCountries();
       if (textEl) textEl.textContent = 'Избери CSV файл';
       if (resEl) resEl.innerHTML = '✅ Импортирани ' + added + ' нови · обновени ' + updated + ' — отвори мач и всичко е попълнено, само "⚡ Изчисли"';
       if (typeof showToast === 'function') showToast('✅ Импортирани ' + (added+updated) + ' мача с пълни данни', 'success');
