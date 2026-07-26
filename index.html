@@ -17551,6 +17551,13 @@ function parseAndApplyOAProbs() {
 
 
 function applyOAProbsToGlobal() {
+  // ✅ КРИТИЧНО: пълен reset ПРЕДИ презаписване — иначе поле, което
+  // липсва при новия мач (напр. OA не дава Draw за него), оставя
+  // СТАРАТА стойност от предишния отворен мач в OA_PROBS (глобален,
+  // никога не се чистеше между мачове). Точно затова различни мачове
+  // показваха ЕДНАКВА прогноза — смес от нови + залепени стари данни.
+  Object.keys(OA_PROBS).forEach(function(k){ OA_PROBS[k] = null; });
+
   // Четем от ВСИЧКИ 30 input-а и записваме в OA_PROBS
   for (var inputId in OA_INPUT_KEY_MAP) {
     var probKey = OA_INPUT_KEY_MAP[inputId];
@@ -28706,9 +28713,12 @@ function mwRestore(key) {
   }
   // ✅ Multi-bookmaker данни (Pinnacle/Bet365/Betano) от пълния CSV
   // импорт — възстановяваме MBK_DATA за calculate()'s hasPin blend.
+  // ВИНАГИ презаписваме (дори с празно), иначе предишния отворен мач
+  // оставя своите Pinnacle данни залепени за следващия — същия бъг
+  // като OA_PROBS по-горе.
   var mbk = MW_STATE[key] && MW_STATE[key].mbk;
-  if (mbk && typeof MBK_DATA !== 'undefined') {
-    MBK_DATA = mbk;
+  if (typeof MBK_DATA !== 'undefined') {
+    MBK_DATA = mbk || { market_1x2: [], market_ou25: [], market_btts: [] };
   }
 }
 
