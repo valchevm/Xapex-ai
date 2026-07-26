@@ -28570,6 +28570,7 @@ function fxImportFullCsv(event) {
       function col(vals, name) { return idx[name] !== undefined ? vals[idx[name]] : null; }
 
       var added = 0, updated = 0;
+      var importedKeys = [];
       for (var li = 1; li < lines.length; li++) {
         var vals = parseCSVLine(lines[li]);
         var country = col(vals, 'country') || 'Unknown';
@@ -28655,6 +28656,7 @@ function fxImportFullCsv(event) {
         MW_STATE[key2] = MW_STATE[key2] || {};
         MW_STATE[key2].fields = fields;
         MW_STATE[key2].mbk = mbk;
+        importedKeys.push(key2);
       }
 
       mwSave();
@@ -28666,9 +28668,19 @@ function fxImportFullCsv(event) {
       // съществувала — грешно предположено име, затова списъкът никога не
       // се опресняваше след импорт).
       if (typeof fxRenderPastedCountries === 'function') fxRenderPastedCountries();
+
+      // ✅ BULK автоматично изчисление — иначе всеки мач чака да бъде
+      // отворен РЪЧНО поотделно, преди да получи прогноза (затова "277
+      // мача нямат статистика" — просто не са били отворени още).
+      if (textEl) textEl.textContent = 'Изчисляване на ' + importedKeys.length + ' мача...';
+      var calcOk = (typeof fxBulkCalculateImported === 'function') ? fxBulkCalculateImported(importedKeys) : 0;
+
+      if (typeof persistFxPasted === 'function') persistFxPasted(); // пак — вече с попълнени modelProbs
+      if (typeof fxRenderPastedCountries === 'function') fxRenderPastedCountries();
+
       if (textEl) textEl.textContent = 'Избери CSV файл';
-      if (resEl) resEl.innerHTML = '✅ Импортирани ' + added + ' нови · обновени ' + updated + ' — отвори мач и всичко е попълнено, само "⚡ Изчисли"';
-      if (typeof showToast === 'function') showToast('✅ Импортирани ' + (added+updated) + ' мача с пълни данни', 'success');
+      if (resEl) resEl.innerHTML = '✅ Импортирани ' + added + ' нови · обновени ' + updated + ' · изчислени ' + calcOk + '/' + importedKeys.length;
+      if (typeof showToast === 'function') showToast('✅ ' + calcOk + '/' + importedKeys.length + ' мача с готова прогноза', 'success');
     } catch(err) {
       if (textEl) textEl.textContent = 'Избери CSV файл';
       if (resEl) resEl.innerHTML = '❌ Грешка: ' + err.message;
@@ -28677,6 +28689,41 @@ function fxImportFullCsv(event) {
     document.getElementById('fxFullCsvInput').value = '';
   };
   reader.readAsText(file);
+}
+
+// ── Изчислява ВСИЧКИ новоимпортирани мачове автоматично, веднага след
+// импорта — без това всеки мач чака ръчно отваряне поотделно, преди
+// изобщо да получи прогноза от модела. Reuse-ва СПОДЕЛЕНИЯ dock (един
+// инстанс за цялото приложение) — не е нужен отделен за всеки мач. ──
+function fxBulkCalculateImported(keys) {
+  if (!keys || !keys.length) return 0;
+  var dock = mwEnsureDock();
+  var wasAttached = !!dock.parentNode;
+  if (!wasAttached) {
+    // Off-screen, за да не пречи визуално, докато смятаме на партиди
+    dock.style.position = 'fixed'; dock.style.left = '-9999px'; dock.style.top = '-9999px';
+    document.body.appendChild(dock);
+  }
+  mwEmbedPanels();
+  mwForceHideAllCards();
+
+  var prevActiveKey = MW_ACTIVE_KEY;
+  var ok = 0;
+  keys.forEach(function(key){
+    try {
+      MW_ACTIVE_KEY = key;
+      mwRestore(key);
+      mwCalc();
+      if (window.LAST_MATCH_CALC) ok++;
+    } catch(e) {
+      console.warn('[fxBulkCalculateImported] неуспешно за', key, e.message);
+    }
+  });
+
+  MW_ACTIVE_KEY = prevActiveKey;
+  if (!wasAttached && dock.parentNode) { dock.parentNode.removeChild(dock); }
+  dock.style.position = ''; dock.style.left = ''; dock.style.top = '';
+  return ok;
 }
 
 function mwCapture(key) {
@@ -29464,6 +29511,7 @@ window.mwToggleAddLog = mwToggleAddLog;
 window.mwConfirmAddLog = mwConfirmAddLog;
 window.mwAskGemini = mwAskGemini;
 window.fxImportFullCsv = fxImportFullCsv;
+window.fxBulkCalculateImported = fxBulkCalculateImported;
 window.mwRestore = mwRestore;
 window.mwCapture = mwCapture;
 
