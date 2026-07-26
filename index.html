@@ -29264,6 +29264,15 @@ function mwConfirmAddLog() {
 function mwCalc() {
   if (!MW_ACTIVE_KEY) return;
   mwCapture(MW_ACTIVE_KEY);
+  // ✅ КРИТИЧНО: OA_PROBS (използван от calculate()'s hasOA проверка) се
+  // синхронизира от DOM полетата САМО чрез тази функция — обикновено
+  // тригвана от бутона "Запази вероятности". Данни, възстановени
+  // програмно (CSV импорт, mwRestore) НИКОГА не минават през нея сами
+  // по себе си, защото само сменят .value без да symulират истинско
+  // потребителско въвеждане. Без тази стъпка OA_PROBS остава празен →
+  // hasOA=false → calculate() тихо връща без резултат → "Липсват
+  // достатъчно данни" дори при перфектно попълнени полета.
+  if (typeof applyOAProbsToGlobal === 'function') applyOAProbsToGlobal();
   if (typeof calculate === 'function') calculate();
 
   var CC = window.LAST_MATCH_CALC;
