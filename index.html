@@ -3069,7 +3069,21 @@ input::placeholder, textarea::placeholder {
 
   <div id="fxBrowserPanel" style="display:none">
 
-    
+    <!-- ── Пълен CSV импорт (статистика + OA вероятности + коефициенти
+         от 3 bookmaker-а в един файл) — попълва всичко автоматично ── -->
+    <div style="background:#07101f;border:1px solid rgba(56,189,248,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
+      <div style="font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.5rem">📁 Пълен CSV импорт (статистика + OA + коефициенти)</div>
+      <div style="font-size:.58rem;color:var(--dim);margin-bottom:.6rem;line-height:1.5">
+        Качи CSV с всичко в едно — статистика, OA вероятности за всички пазари, Pinnacle/Bet365/Betano коефициенти. Автоматично попълва мачовете — отваряш и директно "⚡ Изчисли", без ръчно въвеждане.
+      </div>
+      <div onclick="document.getElementById('fxFullCsvInput').click()"
+        style="border:1.5px dashed rgba(56,189,248,.3);border-radius:9px;padding:.7rem;text-align:center;cursor:pointer;background:#0a1429">
+        <div style="font-size:.66rem;font-weight:600;color:var(--acc)" id="fxFullCsvText">Избери CSV файл</div>
+        <input type="file" id="fxFullCsvInput" accept=".csv" hidden onchange="fxImportFullCsv(event)">
+      </div>
+      <div id="fxFullCsvResult" style="margin-top:.5rem;font-size:.6rem;color:var(--dim)"></div>
+    </div>
+
     <!-- ── Paste Fixtures (сгъваемо — не бута списъка надолу) ── -->
     <div style="margin-bottom:.8rem">
       <div id="fxPasteHdr" onclick="fxTogglePasteBox()"
@@ -28512,6 +28526,138 @@ function mwSave() {
   try { localStorage.setItem(MW_STORE_KEY, JSON.stringify(MW_STATE)); } catch(e){}
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 📁 ПЪЛЕН CSV ИМПОРТ — статистика + OA вероятности (всички пазари)
+// + Pinnacle/Bet365/Betano коефициенти в един файл. Попълва FX_PASTED
+// (списъка) И MW_STATE (полетата на работния екран за всеки мач), за
+// да не се въвежда нищо ръчно — отваряш мача и директно Изчисли.
+// ═══════════════════════════════════════════════════════════════
+function fxNum(v) {
+  if (v == null || v === '' || v === 'N/A' || v === 'n/a') return null;
+  var n = parseFloat(String(v).replace('%', ''));
+  return isNaN(n) ? null : n;
+}
+
+function fxImportFullCsv(event) {
+  var file = event.target.files && event.target.files[0];
+  if (!file) return;
+  var textEl = document.getElementById('fxFullCsvText');
+  var resEl = document.getElementById('fxFullCsvResult');
+  if (textEl) textEl.textContent = 'Обработка...';
+
+  var reader = new FileReader();
+  reader.onload = function(e){
+    try {
+      var lines = e.target.result.split(/\r?\n/).filter(function(l){ return l.trim(); });
+      if (lines.length < 2) { if (resEl) resEl.textContent = '⚠ Празен файл'; return; }
+      var headers = parseCSVLine(lines[0]).map(function(h){ return h.trim(); });
+      var idx = {};
+      headers.forEach(function(h, i){ idx[h] = i; });
+      function col(vals, name) { return idx[name] !== undefined ? vals[idx[name]] : null; }
+
+      var added = 0, updated = 0;
+      for (var li = 1; li < lines.length; li++) {
+        var vals = parseCSVLine(lines[li]);
+        var country = col(vals, 'country') || 'Unknown';
+        var league = col(vals, 'league') || '';
+        var home = col(vals, 'home_team') || '';
+        var away = col(vals, 'away_team') || '';
+        if (!home || !away) continue;
+
+        var kickoffDate = col(vals, 'kickoff_date') || '';
+        var kickoffTime = col(vals, 'kickoff_time') || '';
+
+        // ── Статистика + OA + коефициенти → MW_FIELD_IDS формат ──
+        var fields = {
+          hTeam: home, aTeam: away, ctx_league: league,
+          h_mp: fxNum(col(vals,'played_home')), a_mp: fxNum(col(vals,'played_away')),
+          h_pp: fxNum(col(vals,'ppg_home')), a_pp: fxNum(col(vals,'ppg_away')),
+          h_win: fxNum(col(vals,'win_pct_home')), a_win: fxNum(col(vals,'win_pct_away')),
+          h_draw: fxNum(col(vals,'draw_pct_home')), a_draw: fxNum(col(vals,'draw_pct_away')),
+          h_lost: fxNum(col(vals,'lost_pct_home')), a_lost: fxNum(col(vals,'lost_pct_away')),
+          h_sc: fxNum(col(vals,'scored_avg_home')), a_sc: fxNum(col(vals,'scored_avg_away')),
+          h_co: fxNum(col(vals,'conceded_avg_home')), a_co: fxNum(col(vals,'conceded_avg_away')),
+          h_gw: fxNum(col(vals,'games_won_home')), a_gw: fxNum(col(vals,'games_won_away')),
+          h_pts: fxNum(col(vals,'points_home')), a_pts: fxNum(col(vals,'points_away')),
+          h_gd: fxNum(col(vals,'goal_difference_home')), a_gd: fxNum(col(vals,'goal_difference_away')),
+          h_bt: fxNum(col(vals,'btts_pct_home')), a_bt: fxNum(col(vals,'btts_pct_away')),
+          h_cs: fxNum(col(vals,'clean_sheet_pct_home')), a_cs: fxNum(col(vals,'clean_sheet_pct_away')),
+          h_fts: fxNum(col(vals,'failed_to_score_home')), a_fts: fxNum(col(vals,'failed_to_score_away')),
+          h_o25p: fxNum(col(vals,'plus2_5_goals_pct_home')), a_o25p: fxNum(col(vals,'plus2_5_goals_pct_away')),
+          h_htw: fxNum(col(vals,'win_at_ht_pct_home')), a_htw: fxNum(col(vals,'win_at_ht_pct_away')),
+          h_htd: fxNum(col(vals,'draw_at_ht_pct_home')), a_htd: fxNum(col(vals,'draw_at_ht_pct_away')),
+          h_htl: fxNum(col(vals,'lost_at_ht_pct_home')), a_htl: fxNum(col(vals,'lost_at_ht_pct_away')),
+          h_cot: fxNum(col(vals,'total_corners_avg_home')), a_cot: fxNum(col(vals,'total_corners_avg_away')),
+          h_cor1h: fxNum(col(vals,'1h_corners_avg_home')), a_cor1h: fxNum(col(vals,'1h_corners_avg_away')),
+          h_cor2h: fxNum(col(vals,'2h_corners_avg_home')), a_cor2h: fxNum(col(vals,'2h_corners_avg_away')),
+          h_cardf: fxNum(col(vals,'cards_for_avg_home')), a_cardf: fxNum(col(vals,'cards_for_avg_away')),
+          h_offf: fxNum(col(vals,'offsides_for_avg_home')), a_offf: fxNum(col(vals,'offsides_for_avg_away')),
+
+          // ── OA вероятности (всички пазари, директно от prob_* колоните) ──
+          oa_home: fxNum(col(vals,'prob_home_win')), oa_draw: fxNum(col(vals,'prob_draw')), oa_away: fxNum(col(vals,'prob_away_win')),
+          oa_btts: fxNum(col(vals,'prob_btts')),
+          oa_o15: fxNum(col(vals,'prob_plus1_5_goals')), oa_o25: fxNum(col(vals,'prob_plus2_5_goals')),
+          oa_o35: fxNum(col(vals,'prob_plus3_5_goals')), oa_o45: fxNum(col(vals,'prob_plus4_5_goals')),
+          oa_h_o05: fxNum(col(vals,'prob_plus0_5_home_goals')), oa_h_o15: fxNum(col(vals,'prob_plus1_5_home_goals')),
+          oa_a_o05: fxNum(col(vals,'prob_plus0_5_away_goals')), oa_a_o15: fxNum(col(vals,'prob_plus1_5_away_goals')),
+          oa_ht_home: fxNum(col(vals,'prob_home_win_ht')), oa_ht_draw: fxNum(col(vals,'prob_draw_ht')), oa_ht_away: fxNum(col(vals,'prob_away_win_ht')),
+
+          // ── Bet365 коефициенти — залагане/settlement ──
+          b1: fxNum(col(vals,'odds_1x2_bet365_home')), bx: fxNum(col(vals,'odds_1x2_bet365_draw')), b2: fxNum(col(vals,'odds_1x2_bet365_away')),
+          bo: fxNum(col(vals,'odds_over25_bet365')), bu: fxNum(col(vals,'odds_under25_bet365')),
+          bb: fxNum(col(vals,'odds_btts_yes_bet365'))
+        };
+        // Изчистваме null стойности (да не презаписват с "null" при restore)
+        Object.keys(fields).forEach(function(k){ if (fields[k] == null) delete fields[k]; });
+
+        // ── MBK_DATA формат — Pinnacle/Bet365/Betano за 1X2/O-U 2.5/BTTS ──
+        var mbk = { market_1x2: [], market_ou25: [], market_btts: [] };
+        [['Pinnacle','pinnacle'], ['Bet365','bet365'], ['Betano','betano']].forEach(function(pair){
+          var label = pair[0], key = pair[1];
+          var h = fxNum(col(vals,'odds_1x2_'+key+'_home')), d = fxNum(col(vals,'odds_1x2_'+key+'_draw')), a = fxNum(col(vals,'odds_1x2_'+key+'_away'));
+          if (h != null && d != null && a != null) mbk.market_1x2.push({bk:label, home:h, draw:d, away:a});
+          var ov = fxNum(col(vals,'odds_over25_'+key)), un = fxNum(col(vals,'odds_under25_'+key));
+          if (ov != null && un != null) mbk.market_ou25.push({bk:label, over:ov, under:un});
+          var yy = fxNum(col(vals,'odds_btts_yes_'+key)), nn = fxNum(col(vals,'odds_btts_no_'+key));
+          if (yy != null && nn != null) mbk.market_btts.push({bk:label, yes:yy, no:nn});
+        });
+
+        // ── FX_PASTED запис (списъчен изглед) ──
+        if (!FX_PASTED[country]) FX_PASTED[country] = [];
+        var existingIdx = FX_PASTED[country].findIndex(function(m){ return m.home === home && m.away === away; });
+        var fxMatch = {
+          home: home, away: away, league: league,
+          time: kickoffTime, pos: '', quality: 'good',
+          stats: {}, match_date: kickoffDate, kickoff: kickoffDate + ' ' + kickoffTime,
+          odds: { home: fields.b1, draw: fields.bx, away: fields.b2, over25: fields.bo, under25: fields.bu, btts: fields.bb },
+          _fullCsvImport: true
+        };
+
+        var matchIdx;
+        if (existingIdx !== -1) { FX_PASTED[country][existingIdx] = fxMatch; matchIdx = existingIdx; updated++; }
+        else { FX_PASTED[country].push(fxMatch); matchIdx = FX_PASTED[country].length - 1; added++; }
+
+        var key2 = country + '|' + matchIdx;
+        MW_STATE[key2] = MW_STATE[key2] || {};
+        MW_STATE[key2].fields = fields;
+        MW_STATE[key2].mbk = mbk;
+      }
+
+      mwSave();
+      if (typeof fxRenderBrowser === 'function') fxRenderBrowser();
+      if (textEl) textEl.textContent = 'Избери CSV файл';
+      if (resEl) resEl.innerHTML = '✅ Импортирани ' + added + ' нови · обновени ' + updated + ' — отвори мач и всичко е попълнено, само "⚡ Изчисли"';
+      if (typeof showToast === 'function') showToast('✅ Импортирани ' + (added+updated) + ' мача с пълни данни', 'success');
+    } catch(err) {
+      if (textEl) textEl.textContent = 'Избери CSV файл';
+      if (resEl) resEl.innerHTML = '❌ Грешка: ' + err.message;
+      console.error('[fxImportFullCsv]', err);
+    }
+    document.getElementById('fxFullCsvInput').value = '';
+  };
+  reader.readAsText(file);
+}
+
 function mwCapture(key) {
   if (!key) return;
   var data = {};
@@ -28535,14 +28681,21 @@ function mwClearFields() {
 
 function mwRestore(key) {
   var saved = MW_STATE[key] && MW_STATE[key].fields;
-  if (!saved) return;
-  Object.keys(saved).forEach(function(id){
-    var el = document.getElementById(id);
-    if (!el) return;
-    var v = saved[id];
-    if (MW_CHECKBOX_IDS[id]) el.checked = !!v;
-    else if (v !== '' && v != null) el.value = v;
-  });
+  if (saved) {
+    Object.keys(saved).forEach(function(id){
+      var el = document.getElementById(id);
+      if (!el) return;
+      var v = saved[id];
+      if (MW_CHECKBOX_IDS[id]) el.checked = !!v;
+      else if (v !== '' && v != null) el.value = v;
+    });
+  }
+  // ✅ Multi-bookmaker данни (Pinnacle/Bet365/Betano) от пълния CSV
+  // импорт — възстановяваме MBK_DATA за calculate()'s hasPin blend.
+  var mbk = MW_STATE[key] && MW_STATE[key].mbk;
+  if (mbk && typeof MBK_DATA !== 'undefined') {
+    MBK_DATA = mbk;
+  }
 }
 
 // ── Bulletproof показване/скриване — inline !important винаги печели
