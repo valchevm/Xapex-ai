@@ -29040,20 +29040,31 @@ function mwToggleSection(key) {
 function mwSaveSection(key) { mwCollapseSection(key); }
 
 function mwFinishOpen(key, rowEl, m, dock) {
-  mwRestore(key);
-
-  // ✅ КРИТИЧНО: dock-ът трябва да е ПРИКАЧЕН към документа ПРЕДИ да
-  // викаме getElementById за елементи вътре в него — иначе на самия
-  // ПЪРВИ отворен мач в сесията всичко вътре връща null и нищо не се
-  // вгражда (точно затова OA/Коефициенти изглеждаха празни).
+  // ✅ КРИТИЧНО (истинската причина, намерена след дълбока диагностика):
+  // 1) dock-ът трябва да е ПРИКАЧЕН и mwEmbedPanels() трябва да е
+  //    създал/преместил input елементите ПРЕДИ mwRestore() (иначе
+  //    getElementById връща null и нищо не се попълва).
+  // 2) mwRestore() трябва да се извика ПРЕДИ mwCollapseSection()!
+  //    mwCollapseSection() ВЪТРЕШНО вика mwCapture(), който презаписва
+  //    MW_STATE[key].fields с ТЕКУЩОТО (все още празно) DOM състояние —
+  //    ако това стане преди restore, унищожава точно данните, които
+  //    restore-а се опитва да приложи. Затова CSV-импортирани мачове
+  //    винаги показваха празни полета, независимо от реда на
+  //    dock-прикачване сам по себе си.
   rowEl.parentNode.insertBefore(dock, rowEl.nextSibling);
 
   mwEmbedPanels();
   // ✅ Двойна защита: веднага след вграждане, ЯВНО скриваме и трите
   // engine карти, преди каквото и да е друго да се случи.
   mwForceHideAllCards();
+
+  // ── Полетата вече съществуват в DOM-a — възстановяваме ПРЕДИ
+  // каквото и да е друго да успее да ги презапише с празно. ──
+  mwRestore(key);
+
   MW_OPEN_SECTIONS = { stats:false, oa:false, odds:false };
-  ['stats','oa','odds','h2h'].forEach(function(k){ mwCollapseSection(k); }); // старт: всичко затворено, компактно
+  ['stats','oa','odds','h2h'].forEach(function(k){ mwCollapseSection(k); }); // старт: всичко затворено, компактно — вече БЕЗОПАСНО, полетата са попълнени
+
   var titleEl = document.getElementById('mwTitle');
   if (titleEl) titleEl.textContent = '✏️ ' + (m.home||'') + ' vs ' + (m.away||'');
 
@@ -29453,6 +29464,8 @@ window.mwToggleAddLog = mwToggleAddLog;
 window.mwConfirmAddLog = mwConfirmAddLog;
 window.mwAskGemini = mwAskGemini;
 window.fxImportFullCsv = fxImportFullCsv;
+window.mwRestore = mwRestore;
+window.mwCapture = mwCapture;
 
 // След всяко (пре)рендиране на списъка (fxToggleCountry/fxApplySearch и т.н.)
 // презалепваме запазените badges.
