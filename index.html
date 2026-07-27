@@ -28748,6 +28748,19 @@ function mwClearFields() {
 }
 
 function mwRestore(key) {
+  // ✅ КОРЕНЕН ФИКС: изчистваме ВСИЧКИ полета ПЪРВО, независимо дали
+  // новият мач има собствена стойност за всяко от тях. Преди това
+  // mwRestore() САМО презаписваше полетата, налични в saved — ако
+  // мач Б нямаше стойност за поле, което мач А е имал (напр. липсващ
+  // Bet365 draw коефициент в CSV-то), полето оставаше със СТАРАТА
+  // стойност от мач А, залепена завинаги. Точно това причиняваше
+  // "повтарящи се" коефициенти/вероятности между различни мачове.
+  MW_FIELD_IDS.forEach(function(id){
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (MW_CHECKBOX_IDS[id]) el.checked = false; else el.value = '';
+  });
+
   var saved = MW_STATE[key] && MW_STATE[key].fields;
   if (saved) {
     Object.keys(saved).forEach(function(id){
@@ -29513,6 +29526,8 @@ window.mwAskGemini = mwAskGemini;
 window.fxImportFullCsv = fxImportFullCsv;
 window.fxBulkCalculateImported = fxBulkCalculateImported;
 window.mwRestore = mwRestore;
+window.mwEnsureDock = mwEnsureDock;
+window.mwEmbedPanels = mwEmbedPanels;
 window.mwCapture = mwCapture;
 
 // След всяко (пре)рендиране на списъка (fxToggleCountry/fxApplySearch и т.н.)
