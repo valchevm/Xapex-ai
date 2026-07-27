@@ -29499,12 +29499,30 @@ function mwRenderRowBadge(key) {
   if (!anchor) return;
   var old = row.querySelector('.mw-calc-badge');
   if (old) old.remove();
+  var oldWarn = row.querySelector('.mw-missing-warn');
+  if (oldWarn) oldWarn.remove();
   var r = st.result;
   var badge = document.createElement('span');
   badge.className = 'mw-calc-badge';
   var bestTxt = r.best ? (r.best.mkt + ' @' + r.best.fair) : '';
   badge.textContent = '✅ ' + Math.round(r.pH*100) + '/' + Math.round(r.pD*100) + '/' + Math.round(r.pA*100) + (bestTxt ? ' · ' + bestTxt : '');
   anchor.parentNode.insertBefore(badge, anchor.nextSibling);
+
+  // ✅ Визуален индикатор при липсващ Pinnacle или OA вход — иначе
+  // "чист OA fallback" изглежда идентично с пълен blend, без начин
+  // да се разбере, че реално липсват данни за конкретния мач.
+  var blend = r.blend || '';
+  var warnTxt = null;
+  if (blend.indexOf('само OA') !== -1) warnTxt = '⚠️ без Pinnacle коефициент (чист OA)';
+  else if (blend.indexOf('само Pinnacle') !== -1) warnTxt = '⚠️ без OA вероятност (чист Pinnacle)';
+  else if (blend.indexOf('Poisson') !== -1) warnTxt = '⚠️ без OA и без Pinnacle (само статистика)';
+  if (warnTxt) {
+    var warn = document.createElement('div');
+    warn.className = 'mw-missing-warn';
+    warn.style.cssText = 'font-size:.6rem;color:#facc15;margin-top:.2rem';
+    warn.textContent = warnTxt;
+    badge.parentNode.insertBefore(warn, badge.nextSibling);
+  }
 }
 
 function mwRenderAllBadges() {
