@@ -3084,6 +3084,55 @@ input::placeholder, textarea::placeholder {
       <div id="fxFullCsvResult" style="margin-top:.5rem;font-size:.6rem;color:var(--dim)"></div>
     </div>
 
+    <!-- ── Филтър по прогноза (модел/пазар/коефициент/подредба) ── -->
+    <div style="background:#07101f;border:1px solid rgba(167,139,250,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
+      <div style="font-size:.68rem;color:#a78bfa;font-weight:600;margin-bottom:.5rem">🎯 Филтър по прогноза</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.4rem">
+        <select id="fxModelFilterSource" style="padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.65rem;font-family:var(--mono)">
+          <option value="full">🧠 Пълен модел (OA+Pinnacle)</option>
+          <option value="oa">🎯 Само OA вероятност</option>
+        </select>
+        <select id="fxModelFilterMarket" style="padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.65rem;font-family:var(--mono)">
+          <option value="">Всички пазари</option>
+          <option value="1">1 — Домакинска победа</option>
+          <option value="2">2 — Победа за гост</option>
+          <option value="O25">Над 2.5 гола</option>
+          <option value="U25">Под 2.5 гола</option>
+          <option value="BTTS">BTTS — Да</option>
+        </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:.4rem;margin-bottom:.4rem">
+        <input type="number" id="fxModelFilterMinOdds" placeholder="Мин коеф" step="0.01" style="padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.65rem;font-family:var(--mono)">
+        <input type="number" id="fxModelFilterMaxOdds" placeholder="Макс коеф" step="0.01" style="padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.65rem;font-family:var(--mono)">
+        <select id="fxModelFilterSort" style="padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.65rem;font-family:var(--mono)">
+          <option value="">Без подредба</option>
+          <option value="prob">По вероятност ↓</option>
+          <option value="odds">По коефициент ↑</option>
+          <option value="value">По value ↓</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:.5rem">
+        <button onclick="fxApplyModelFilter()" class="btn btn-p" style="flex:1;font-size:.65rem;padding:.5rem">✅ Приложи</button>
+        <button onclick="fxClearModelFilter()" class="btn btn-sec" style="flex:0 0 auto;font-size:.65rem;padding:.5rem .8rem">✕ Изчисти</button>
+      </div>
+      <div id="fxModelFilterResult" style="margin-top:.4rem;font-size:.58rem;color:var(--dim)"></div>
+    </div>
+
+    <!-- ── Проследяване на резултати (маркирай → въведи резултат → анализ) ── -->
+    <div style="background:#07101f;border:1px solid rgba(74,222,128,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
+      <div style="font-size:.68rem;color:#4ade80;font-weight:600;margin-bottom:.5rem">📈 Проследяване на резултати</div>
+      <div style="font-size:.58rem;color:var(--dim);margin-bottom:.6rem;line-height:1.5">
+        Маркирай мачовете, филтрирани по-горе (с избран модел+пазар), после утре въведи резултатите и виж успеваемостта.
+      </div>
+      <button onclick="fxTrackVisibleMatches()" class="btn btn-p" style="width:100%;font-size:.65rem;padding:.5rem;margin-bottom:.5rem">🎯 Маркирай видимите мачове за проследяване</button>
+      <div id="fxTrackStatus" style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem"></div>
+      <div style="display:flex;gap:.5rem">
+        <button onclick="fxShowTrackedPending()" class="btn btn-sec" style="flex:1;font-size:.63rem;padding:.5rem">📝 Въведи резултати</button>
+        <button onclick="fxShowTrackAnalysis()" class="btn btn-sec" style="flex:1;font-size:.63rem;padding:.5rem">📊 Анализ</button>
+      </div>
+      <div id="fxTrackPanel" style="margin-top:.6rem"></div>
+    </div>
+
     <!-- ── Paste Fixtures (сгъваемо — не бута списъка надолу) ── -->
     <div style="margin-bottom:.8rem">
       <div id="fxPasteHdr" onclick="fxTogglePasteBox()"
@@ -25912,6 +25961,189 @@ function fxRemoveFilter(idx) {
   fxRenderFilters();
 }
 
+// ═══════════════════════════════════════════════════════════════
+// 🎯 ФИЛТЪР ПО ПРОГНОЗА — модел (пълен/OA) + пазар + коефициент +
+// подредба. Отделен от FX_FILTERS (суровите статистики по-долу) —
+// тук филтрираме по РЕЗУЛТАТА на модела, не по суровите данни.
+// ═══════════════════════════════════════════════════════════════
+function fxGetMarketProbOdds(m, market, source) {
+  var probs = (source === 'oa') ? (m.oaProbs || {}) : (m.modelProbs || {});
+  var odds = m.odds || {};
+  var isOA = (source === 'oa');
+  switch (market) {
+    case '1':   return { prob: isOA ? probs.home : probs.p1,  odd: parseFloat(odds.home) || null };
+    case '2':   return { prob: isOA ? probs.away : probs.p2,  odd: parseFloat(odds.away) || null };
+    case 'O25': return { prob: isOA ? probs.o25  : probs.pO25, odd: parseFloat(odds.over25) || null };
+    case 'U25': return { prob: isOA ? (probs.o25!=null?100-probs.o25:null) : probs.pU25, odd: parseFloat(odds.under25) || null };
+    case 'BTTS':return { prob: isOA ? probs.btts : probs.pBTTS, odd: parseFloat(odds.btts) || null };
+    default:    return { prob: null, odd: null };
+  }
+}
+
+function fxApplyModelFilter() {
+  var source = document.getElementById('fxModelFilterSource').value;
+  var market = document.getElementById('fxModelFilterMarket').value;
+  var minOdds = parseFloat(document.getElementById('fxModelFilterMinOdds').value);
+  var maxOdds = parseFloat(document.getElementById('fxModelFilterMaxOdds').value);
+  var sortBy = document.getElementById('fxModelFilterSort').value;
+  minOdds = isNaN(minOdds) ? null : minOdds;
+  maxOdds = isNaN(maxOdds) ? null : maxOdds;
+
+  var flat = [];
+  Object.keys(FX_PASTED).forEach(function(country){
+    FX_PASTED[country].forEach(function(m){
+      // ✅ Изисква поне минимална прогноза — иначе филтърът по пазар/
+      // коефициент/подредба няма какво да сравнява за този мач.
+      if (!m.modelProbs && !m.oaProbs) return;
+      var entry = { country: country, m: m };
+      if (market) {
+        var po = fxGetMarketProbOdds(m, market, source);
+        if (po.prob == null) return; // няма прогноза за този пазар при избрания модел
+        if (minOdds != null && (po.odd == null || po.odd < minOdds)) return;
+        if (maxOdds != null && (po.odd == null || po.odd > maxOdds)) return;
+        entry.prob = po.prob; entry.odd = po.odd;
+        entry.value = (po.odd != null) ? (po.prob/100 * po.odd - 1) : null;
+      }
+      flat.push(entry);
+    });
+  });
+
+  if (market && sortBy) {
+    flat.sort(function(a, b){
+      if (sortBy === 'prob')  return (b.prob||0) - (a.prob||0);
+      if (sortBy === 'odds')  return (a.odd==null?999:a.odd) - (b.odd==null?999:b.odd);
+      if (sortBy === 'value') return (b.value==null?-999:b.value) - (a.value==null?-999:a.value);
+      return 0;
+    });
+    window.FX_MODEL_SORT_ACTIVE = true;
+    // ✅ КРИТИЧНО: FX_VIEW нормално е групиран ПО ДЪРЖАВА, а всяка
+    // държава се рендерира като отделна секция — подредбата по
+    // вероятност/коефициент/value щеше да важи само ВЪТРЕ във всяка
+    // държава поотделно, не ГЛОБАЛНО през всички мачове (каквото
+    // очевидно е нужно, за да намериш НАЙ-добрия value bet измежду
+    // всички държави). Затова при активна подредба показваме резултата
+    // като ЕДИН общ списък, вместо разпръснат по държави.
+    FX_VIEW = { '🎯 Подредени резултати': flat.map(function(e){ return e.m; }) };
+  } else {
+    window.FX_MODEL_SORT_ACTIVE = false;
+    FX_VIEW = {};
+    flat.forEach(function(entry){
+      if (!FX_VIEW[entry.country]) FX_VIEW[entry.country] = [];
+      FX_VIEW[entry.country].push(entry.m);
+    });
+  }
+
+  var resEl = document.getElementById('fxModelFilterResult');
+  if (resEl) resEl.textContent = '✅ ' + flat.length + ' мача отговарят на филтъра';
+  fxRenderPastedCountries();
+}
+
+function fxClearModelFilter() {
+  document.getElementById('fxModelFilterSource').value = 'full';
+  document.getElementById('fxModelFilterMarket').value = '';
+  document.getElementById('fxModelFilterMinOdds').value = '';
+  document.getElementById('fxModelFilterMaxOdds').value = '';
+  document.getElementById('fxModelFilterSort').value = '';
+  window.FX_MODEL_SORT_ACTIVE = false;
+  FX_VIEW = null;
+  var resEl = document.getElementById('fxModelFilterResult');
+  if (resEl) resEl.textContent = '';
+  fxRenderPastedCountries();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 📈 ПРОСЛЕДЯВАНЕ НА РЕЗУЛТАТИ — маркирай прогнози → въведи резултат
+// на следващия ден → анализ на успеваемостта (Пълен модел vs OA).
+// Пази се в localStorage (само на това устройство).
+// ═══════════════════════════════════════════════════════════════
+var FX_TRACKED = [];
+(function(){ try { FX_TRACKED = JSON.parse(localStorage.getItem('xgpro_fx_tracked') || '[]'); } catch(e){ FX_TRACKED = []; } })();
+function fxSaveTracked() { try { localStorage.setItem('xgpro_fx_tracked', JSON.stringify(FX_TRACKED)); } catch(e){} }
+
+function fxTrackVisibleMatches() {
+  var source = document.getElementById('fxModelFilterSource').value;
+  var market = document.getElementById('fxModelFilterMarket').value;
+  if (!market) {
+    var st = document.getElementById('fxTrackStatus');
+    if (st) st.innerHTML = '⚠ Избери пазар във филтъра по-горе и натисни "✅ Приложи" първо.';
+    return;
+  }
+  var SRC = FX_VIEW || FX_PASTED;
+  var added = 0;
+  Object.keys(SRC).forEach(function(country){
+    SRC[country].forEach(function(m){
+      var po = fxGetMarketProbOdds(m, market, source);
+      if (po.prob == null) return;
+      // Не дублираме — един и същ мач+пазар+модел не се маркира два пъти
+      var dup = FX_TRACKED.find(function(t){ return t.home===m.home && t.away===m.away && t.market===market && t.source===source && t.result==null; });
+      if (dup) return;
+      FX_TRACKED.push({
+        id: Date.now() + '_' + added, date: new Date().toISOString().slice(0,10),
+        country: country, home: m.home, away: m.away, market: market, source: source,
+        predProb: po.prob, predOdds: po.odd, result: null, correct: null
+      });
+      added++;
+    });
+  });
+  fxSaveTracked();
+  var st = document.getElementById('fxTrackStatus');
+  if (st) st.textContent = '✅ Маркирани ' + added + ' нови мача (' + (market) + ', ' + (source==='full'?'Пълен модел':'Само OA') + ')';
+}
+
+var FX_MARKET_LABELS = { '1':'1 (Домакин)', '2':'2 (Гост)', 'O25':'Над 2.5', 'U25':'Под 2.5', 'BTTS':'BTTS Да' };
+
+function fxShowTrackedPending() {
+  var panel = document.getElementById('fxTrackPanel');
+  if (!panel) return;
+  var pending = FX_TRACKED.filter(function(t){ return t.result == null; });
+  if (!pending.length) { panel.innerHTML = '<div style="font-size:.6rem;color:var(--dim)">Няма чакащи мачове за резултат.</div>'; return; }
+  panel.innerHTML = pending.map(function(t){
+    return '<div style="background:#0a1429;border-radius:6px;padding:.5rem;margin-bottom:.4rem;font-size:.6rem">' +
+      '<div style="margin-bottom:.3rem">' + t.home + ' vs ' + t.away + ' — <span style="color:var(--acc)">' + (FX_MARKET_LABELS[t.market]||t.market) + '</span> · ' + t.predProb.toFixed(0) + '% @' + (t.predOdds!=null?t.predOdds.toFixed(2):'—') + '</div>' +
+      '<div style="display:flex;gap:.4rem">' +
+        '<button onclick="fxRecordResult(\'' + t.id + '\', true)" class="btn" style="flex:1;background:rgba(74,222,128,.15);border:1px solid rgba(74,222,128,.4);color:#4ade80;font-size:.6rem;padding:.35rem">✅ Сбъдна се</button>' +
+        '<button onclick="fxRecordResult(\'' + t.id + '\', false)" class="btn" style="flex:1;background:rgba(248,113,113,.15);border:1px solid rgba(248,113,113,.4);color:#f87171;font-size:.6rem;padding:.35rem">❌ Не се сбъдна</button>' +
+      '</div></div>';
+  }).join('');
+}
+
+function fxRecordResult(id, wasCorrect) {
+  var t = FX_TRACKED.find(function(x){ return x.id === id; });
+  if (!t) return;
+  t.result = wasCorrect ? 'win' : 'lose';
+  t.correct = wasCorrect;
+  fxSaveTracked();
+  fxShowTrackedPending();
+}
+
+function fxShowTrackAnalysis() {
+  var panel = document.getElementById('fxTrackPanel');
+  if (!panel) return;
+  var done = FX_TRACKED.filter(function(t){ return t.result != null; });
+  if (!done.length) { panel.innerHTML = '<div style="font-size:.6rem;color:var(--dim)">Няма въведени резултати още.</div>'; return; }
+
+  function stats(list) {
+    var n = list.length, wins = list.filter(function(t){return t.correct;}).length;
+    var avgOdds = list.reduce(function(s,t){return s + (t.predOdds||0);}, 0) / (n||1);
+    var roi = list.reduce(function(s,t){ return s + (t.correct ? (t.predOdds-1) : -1); }, 0) / (n||1) * 100;
+    return { n: n, wins: wins, pct: n ? (wins/n*100) : 0, avgOdds: avgOdds, roi: roi };
+  }
+  var full = stats(done.filter(function(t){return t.source==='full';}));
+  var oa   = stats(done.filter(function(t){return t.source==='oa';}));
+
+  function row(label, s) {
+    if (!s.n) return '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.4rem">' + label + ': няма данни</div>';
+    var col = s.pct >= 55 ? '#4ade80' : s.pct >= 45 ? 'var(--yel)' : '#f87171';
+    return '<div style="background:#0a1429;border-radius:6px;padding:.6rem;margin-bottom:.5rem">' +
+      '<div style="font-size:.66rem;font-weight:600;margin-bottom:.3rem">' + label + '</div>' +
+      '<div style="font-size:.62rem;color:' + col + '">' + s.wins + '/' + s.n + ' верни (' + s.pct.toFixed(1) + '%)</div>' +
+      '<div style="font-size:.58rem;color:var(--dim)">Среден коеф: ' + s.avgOdds.toFixed(2) + ' · ROI: ' + (s.roi>=0?'+':'') + s.roi.toFixed(1) + '%</div>' +
+      '</div>';
+  }
+  panel.innerHTML = row('🧠 Пълен модел (OA+Pinnacle)', full) + row('🎯 Само OA', oa) +
+    '<div style="font-size:.56rem;color:var(--dim);margin-top:.3rem">Общо въведени резултати: ' + done.length + ' от ' + FX_TRACKED.length + ' маркирани</div>';
+}
+
 function fxClearFilters() {
   FX_FILTERS = [];
   FX_VIEW = null;
@@ -26175,7 +26407,7 @@ function fxBuildLogEntryFromFixture(m, country) {
     awayTeam: m.away,
     matchDate: matchDate,
     league: m.league || '',
-    country: country,
+    country: origCountry,
     // Прогноза (snapshot)
     pH: pred.p1 / 100,
     pD: pred.pX / 100,
@@ -26281,15 +26513,19 @@ function fxRenderPastedCountries() {
   container.innerHTML = countries.map(function(country) {
     var flag = COUNTRY_FLAGS[country] || '🌍';
     var matches = SRC[country].slice();  // copy за да не мутираме оригинала
-    // ✅ Сортиране по час на започване (празните времена най-долу)
-    matches.sort(function(a, b){
-      var ta = (a.time || '').trim();
-      var tb = (b.time || '').trim();
-      if (!ta && !tb) return 0;
-      if (!ta) return 1;
-      if (!tb) return -1;
-      return ta.localeCompare(tb);
-    });
+    // ✅ Сортиране по час на започване (празните времена най-долу) —
+    // ПРОПУСНАТО, ако филтърът по прогноза вече е подредил списъка по
+    // вероятност/коефициент/value (запазваме неговата подредба).
+    if (!window.FX_MODEL_SORT_ACTIVE) {
+      matches.sort(function(a, b){
+        var ta = (a.time || '').trim();
+        var tb = (b.time || '').trim();
+        if (!ta && !tb) return 0;
+        if (!ta) return 1;
+        if (!tb) return -1;
+        return ta.localeCompare(tb);
+      });
+    }
     var matchesHtml = matches.map(function(m, idx) {
       var qualClass = 'fx-qual-' + (m.quality || 'medium');
       var sigHtml = '';
@@ -26411,8 +26647,18 @@ function fxRenderPastedCountries() {
         }
       }
 
-      // Индекс в оригиналния FX_PASTED
-      var origIdx = FX_PASTED[country].indexOf(m);
+      // Индекс в оригиналния FX_PASTED — с fallback, ако сме в синтетична
+      // "държава" (напр. подредени резултати от филтъра по прогноза),
+      // където директния lookup не съществува.
+      var origIdx = (FX_PASTED[country] || []).indexOf(m);
+      var origCountry = country;
+      if (origIdx === -1) {
+        Object.keys(FX_PASTED).some(function(c){
+          var i = FX_PASTED[c].indexOf(m);
+          if (i !== -1) { origIdx = i; origCountry = c; return true; }
+          return false;
+        });
+      }
 
       // ✅ BetPro прогноза избор — dropdown да избереш кой пазар отива в BetPro
       var betproHtml = '';
@@ -26450,7 +26696,7 @@ function fxRenderPastedCountries() {
           '<div style="display:flex;align-items:center;gap:5px;margin-top:5px;' +
           'background:rgba(56,189,248,.05);border-radius:5px;padding:4px 6px" onclick="event.stopPropagation()">' +
           '<span style="font-size:.55rem;color:var(--acc);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap">📤 BetPro:</span>' +
-          '<select onchange="fxSetBetproPick(\'' + country.replace(/\x27/g,"\\'") + '\',' + origIdx + ',this.value)" ' +
+          '<select onchange="fxSetBetproPick(\'' + origCountry.replace(/\x27/g,"\\'") + '\',' + origIdx + ',this.value)" ' +
           'style="flex:1;padding:3px 5px;background:#0a1429;border:1px solid rgba(56,189,248,.3);' +
           'border-radius:4px;color:var(--acc);font-size:.62rem;cursor:pointer">' +
           opts +
@@ -26471,7 +26717,7 @@ function fxRenderPastedCountries() {
       var checkboxHtml = '';
       var canBeLogged = !hasResult && m.modelProbs && m.topMarket;
       if (canBeLogged) {
-        var fxKey = country + '|' + origIdx;
+        var fxKey = origCountry + '|' + origIdx;
         var isChecked = (FX_LOG_SELECTED[fxKey] === true) ? ' checked' : '';
         var alreadyLogged = m._loggedAsId ? true : false;
         if (alreadyLogged) {
@@ -26480,14 +26726,14 @@ function fxRenderPastedCountries() {
         } else {
           checkboxHtml = '<input type="checkbox" class="fx-log-check"' + isChecked +
             ' data-fx-key="' + fxKey + '"' +
-            ' onclick="event.stopPropagation();fxToggleLogSelect(\'' + country.replace(/\x27/g,"\\'") + '\',' + origIdx + ',this.checked)"' +
+            ' onclick="event.stopPropagation();fxToggleLogSelect(\'' + origCountry.replace(/\x27/g,"\\'") + '\',' + origIdx + ',this.checked)"' +
             ' style="margin-right:6px;cursor:pointer;width:16px;height:16px;accent-color:var(--pur)"' +
             ' title="Маркирай за добавяне в лога с текущата прогноза">';
         }
       }
 
-      return '<div class="fx-match-item" data-mw-key="' + escHtml(country) + '|' + origIdx + '" onclick="fxOpenMatchWorkspace(this,\'' +
-        country.replace(/\x27/g,"\\'") + '\',' + origIdx + ')">' +
+      return '<div class="fx-match-item" data-mw-key="' + escHtml(origCountry) + '|' + origIdx + '" onclick="fxOpenMatchWorkspace(this,\'' +
+        origCountry.replace(/\x27/g,"\\'") + '\',' + origIdx + ')">' +
         '<div class="fx-match-teams" style="display:flex;align-items:center">' +
           checkboxHtml +
           '<span style="flex:1">' + escHtml(m.home) + ' vs ' + escHtml(m.away) + '</span>' +
@@ -28645,6 +28891,12 @@ function fxImportFullCsv(event) {
           time: kickoffTime, pos: '', quality: 'good',
           stats: {}, match_date: kickoffDate, kickoff: kickoffDate + ' ' + kickoffTime,
           odds: { home: fields.b1, draw: fields.bx, away: fields.b2, over25: fields.bo, under25: fields.bu, btts: fields.bb },
+          // ✅ Суровите OA вероятности директно на match обекта — за
+          // филтъра "Модел: само OA" без нужда да четем MW_STATE.
+          oaProbs: {
+            home: fields.oa_home, draw: fields.oa_draw, away: fields.oa_away,
+            o25: fields.oa_o25, btts: fields.oa_btts
+          },
           _fullCsvImport: true
         };
 
@@ -29002,12 +29254,33 @@ function mwRenderOddsSummary() {
   var box = document.getElementById('mwOddsSummary');
   if (!box) return;
   function v(id){ var el = document.getElementById(id); return el && el.value !== '' ? el.value : null; }
-  var row = mwChipRow([
+  var bet365Row = mwChipRow([
     ['1', v('b1')], ['X', v('bx')], ['2', v('b2')],
     ['O2.5', v('bo')], ['U2.5', v('bu')],
     ['BTTS', v('bb')]
   ]);
-  box.innerHTML = row || '<div class="mw-empty">Няма въведени коефициенти — отвори секцията, за да добавиш.</div>';
+
+  // ✅ Pinnacle коефициенти — отделен ред, за да се виждат ЗАЕДНО с
+  // Bet365 (Bet365 за реално залагане, Pinnacle за какво реално
+  // ползва моделът в blend-а).
+  var pinRow = '';
+  if (typeof MBK_DATA !== 'undefined' && MBK_DATA) {
+    var pin1x2 = (MBK_DATA.market_1x2 || []).find(function(r){ return r.bk && r.bk.toLowerCase().indexOf('pinnacle') !== -1; });
+    var pinOU  = (MBK_DATA.market_ou25 || []).find(function(r){ return r.bk && r.bk.toLowerCase().indexOf('pinnacle') !== -1; });
+    var pinBtts= (MBK_DATA.market_btts || []).find(function(r){ return r.bk && r.bk.toLowerCase().indexOf('pinnacle') !== -1; });
+    if (pin1x2 || pinOU || pinBtts) {
+      pinRow = mwChipRow([
+        ['1', pin1x2 ? pin1x2.home : null], ['X', pin1x2 ? pin1x2.draw : null], ['2', pin1x2 ? pin1x2.away : null],
+        ['O2.5', pinOU ? pinOU.over : null], ['U2.5', pinOU ? pinOU.under : null],
+        ['BTTS', pinBtts ? pinBtts.yes : null]
+      ]);
+    }
+  }
+
+  var html = '';
+  if (bet365Row) html += '<div style="font-size:.58rem;color:var(--dim);margin-bottom:.2rem">🎰 Bet365 (за залагане)</div>' + bet365Row;
+  if (pinRow) html += '<div style="font-size:.58rem;color:var(--dim);margin:.5rem 0 .2rem">📊 Pinnacle (използва моделът)</div>' + pinRow;
+  box.innerHTML = html || '<div class="mw-empty">Няма въведени коефициенти — отвори секцията, за да добавиш.</div>';
 }
 window.mwRenderOddsSummary = mwRenderOddsSummary;
 
