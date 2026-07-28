@@ -26060,6 +26060,45 @@ var FX_TRACKED = [];
 (function(){ try { FX_TRACKED = JSON.parse(localStorage.getItem('xgpro_fx_tracked') || '[]'); } catch(e){ FX_TRACKED = []; } })();
 function fxSaveTracked() { try { localStorage.setItem('xgpro_fx_tracked', JSON.stringify(FX_TRACKED)); } catch(e){} }
 
+// ✅ Oracle sync — за да се вижда проследяването на ВСяко устройство,
+// не само локално. Изисква таблица xgpro_fx_tracked (SQL по-долу в
+// коментар за референция, изпълни го веднъж в Oracle ако липсва):
+//
+// CREATE TABLE xgpro_fx_tracked (
+//   id VARCHAR2(50) PRIMARY KEY, track_date VARCHAR2(20),
+//   country VARCHAR2(100), home_team VARCHAR2(200), away_team VARCHAR2(200),
+//   market VARCHAR2(20), source VARCHAR2(20), pred_prob NUMBER, pred_odds NUMBER,
+//   result VARCHAR2(20), correct NUMBER(1), created_at TIMESTAMP DEFAULT SYSTIMESTAMP
+// );
+// (после enable ORDS REST на таблицата, както другите xgpro_* таблици)
+async function fxSyncTrackedToOracle(t) {
+  try {
+    await _oraReq('xgpro_fx_tracked/' + t.id, 'PUT', {
+      id: t.id, track_date: t.date, country: t.country, home_team: t.home, away_team: t.away,
+      market: t.market, source: t.source, pred_prob: t.predProb, pred_odds: t.predOdds,
+      result: t.result, correct: t.correct === true ? 1 : (t.correct === false ? 0 : null)
+    });
+  } catch(e) { console.warn('[fxSyncTrackedToOracle]', e.message); }
+}
+async function fxLoadTrackedFromOracle() {
+  try {
+    var rows = await _oraGet('xgpro_fx_tracked', 'limit=1000');
+    if (!rows || !rows.length) return;
+    var byId = {};
+    FX_TRACKED.forEach(function(t){ byId[t.id] = t; });
+    rows.forEach(function(r){
+      byId[r.id] = {
+        id: r.id, date: r.track_date, country: r.country, home: r.home_team, away: r.away_team,
+        market: r.market, source: r.source, predProb: r.pred_prob, predOdds: r.pred_odds,
+        result: r.result, correct: r.correct === 1 ? true : (r.correct === 0 ? false : null)
+      };
+    });
+    FX_TRACKED = Object.values(byId);
+    fxSaveTracked();
+  } catch(e) { console.warn('[fxLoadTrackedFromOracle]', e.message); }
+}
+if (typeof window !== 'undefined') { setTimeout(function(){ fxLoadTrackedFromOracle(); }, 3000); }
+
 function fxTrackVisibleMatches() {
   var source = document.getElementById('fxModelFilterSource').value;
   var market = document.getElementById('fxModelFilterMarket').value;
@@ -26086,6 +26125,9 @@ function fxTrackVisibleMatches() {
     });
   });
   fxSaveTracked();
+  // ✅ Синхронизираме всеки нов запис с Oracle (кросдоустройствено)
+  var newlyAdded = FX_TRACKED.slice(-added);
+  newlyAdded.forEach(function(t){ fxSyncTrackedToOracle(t); });
   var st = document.getElementById('fxTrackStatus');
   if (st) st.textContent = '✅ Маркирани ' + added + ' нови мача (' + (market) + ', ' + (source==='full'?'Пълен модел':'Само OA') + ')';
 }
@@ -26113,6 +26155,7 @@ function fxRecordResult(id, wasCorrect) {
   t.result = wasCorrect ? 'win' : 'lose';
   t.correct = wasCorrect;
   fxSaveTracked();
+  fxSyncTrackedToOracle(t);
   fxShowTrackedPending();
 }
 
