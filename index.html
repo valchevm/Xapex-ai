@@ -3112,8 +3112,8 @@ input::placeholder, textarea::placeholder {
         </select>
       </div>
       <div style="display:flex;gap:.5rem">
-        <button onclick="fxApplyModelFilter()" class="btn btn-p" style="flex:1;font-size:.65rem;padding:.5rem">✅ Приложи</button>
-        <button onclick="fxClearModelFilter()" class="btn btn-sec" style="flex:0 0 auto;font-size:.65rem;padding:.5rem .8rem">✕ Изчисти</button>
+        <button onclick="fxApplyModelFilter()" class="btn btn-p" style="flex:1;width:auto;margin-top:0;font-size:.65rem;padding:.5rem">✅ Приложи</button>
+        <button onclick="fxClearModelFilter()" class="btn btn-sec" style="flex:0 0 auto;width:auto;margin-top:0;font-size:.65rem;padding:.5rem .8rem">✕ Изчисти</button>
       </div>
       <div id="fxModelFilterResult" style="margin-top:.4rem;font-size:.58rem;color:var(--dim)"></div>
     </div>
@@ -3127,8 +3127,16 @@ input::placeholder, textarea::placeholder {
       <button onclick="fxTrackVisibleMatches()" class="btn btn-p" style="width:100%;font-size:.65rem;padding:.5rem;margin-bottom:.5rem">🎯 Маркирай видимите мачове за проследяване</button>
       <div id="fxTrackStatus" style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem"></div>
       <div style="display:flex;gap:.5rem">
-        <button onclick="fxShowTrackedPending()" class="btn btn-sec" style="flex:1;font-size:.63rem;padding:.5rem">📝 Въведи резултати</button>
-        <button onclick="fxShowTrackAnalysis()" class="btn btn-sec" style="flex:1;font-size:.63rem;padding:.5rem">📊 Анализ</button>
+        <button onclick="fxShowTrackedPending()" class="btn btn-sec" style="flex:1;width:auto;margin-top:0;font-size:.63rem;padding:.5rem">📝 Въведи резултати</button>
+        <button onclick="fxShowTrackAnalysis()" class="btn btn-sec" style="flex:1;width:auto;margin-top:0;font-size:.63rem;padding:.5rem">📊 Анализ</button>
+      </div>
+      <button onclick="fxToggleGeminiChat()" class="btn" style="width:auto;margin-top:.5rem;background:linear-gradient(135deg,#a78bfa,#7b61ff);color:#fff;font-weight:600;font-size:.63rem;padding:.5rem">✨ Питай Gemini за резултатите</button>
+      <div id="fxGeminiChatPanel" style="display:none;margin-top:.5rem;background:#0a1429;border:1px solid rgba(167,139,250,.25);border-radius:8px;padding:.6rem">
+        <div id="fxGeminiChatHistory" style="max-height:260px;overflow-y:auto;margin-bottom:.5rem;font-size:.62rem;line-height:1.6"></div>
+        <div style="display:flex;gap:.4rem">
+          <input type="text" id="fxGeminiChatInput" placeholder="Напр: защо OA моделът бърка при по-слаби лиги?" style="flex:1;padding:.5rem;background:#07101f;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.62rem;font-family:var(--mono)" onkeydown="if(event.key==='Enter')fxSendGeminiChat()">
+          <button onclick="fxSendGeminiChat()" class="btn btn-p" style="width:auto;margin-top:0;padding:.5rem .8rem;font-size:.62rem">➤</button>
+        </div>
       </div>
       <div id="fxTrackPanel" style="margin-top:.6rem"></div>
     </div>
@@ -26187,6 +26195,94 @@ function fxShowTrackAnalysis() {
     '<div style="font-size:.56rem;color:var(--dim);margin-top:.3rem">Общо въведени резултати: ' + done.length + ' от ' + FX_TRACKED.length + ' маркирани</div>';
 }
 
+// ═══════════════════════════════════════════════════════════════
+// ✨ GEMINI ЧАТ ЗА АНАЛИЗ НА ПРОСЛЕДЯВАНЕТО — разговор с контекст,
+// не само еднократен въпрос. Пази историята в паметта (не се записва).
+// ═══════════════════════════════════════════════════════════════
+var FX_GEMINI_CHAT_HISTORY = [];
+
+function fxToggleGeminiChat() {
+  var panel = document.getElementById('fxGeminiChatPanel');
+  if (!panel) return;
+  var isHidden = panel.style.display === 'none' || !panel.style.display;
+  panel.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) fxRenderGeminiChatHistory();
+}
+
+function fxBuildTrackingSummaryForGemini() {
+  var done = FX_TRACKED.filter(function(t){ return t.result != null; });
+  function stats(list) {
+    var n = list.length, wins = list.filter(function(t){return t.correct;}).length;
+    var roi = n ? list.reduce(function(s,t){ return s + (t.correct ? (t.predOdds-1) : -1); }, 0) / n * 100 : 0;
+    return { n: n, wins: wins, pct: n ? (wins/n*100) : 0, roi: roi };
+  }
+  var full = stats(done.filter(function(t){return t.source==='full';}));
+  var oa   = stats(done.filter(function(t){return t.source==='oa';}));
+  var lines = [];
+  lines.push('Пълен модел (OA+Pinnacle): ' + full.wins + '/' + full.n + ' верни (' + full.pct.toFixed(1) + '%), ROI ' + full.roi.toFixed(1) + '%');
+  lines.push('Само OA: ' + oa.wins + '/' + oa.n + ' верни (' + oa.pct.toFixed(1) + '%), ROI ' + oa.roi.toFixed(1) + '%');
+  lines.push('');
+  lines.push('Детайли по мач:');
+  done.forEach(function(t){
+    lines.push('- ' + t.home + ' vs ' + t.away + ' [' + (FX_MARKET_LABELS[t.market]||t.market) + ', ' + (t.source==='full'?'Пълен':'OA') + '] прогноза ' + t.predProb.toFixed(0) + '% @' + (t.predOdds!=null?t.predOdds.toFixed(2):'—') + ' → ' + (t.correct ? '✅ вярна' : '❌ грешна'));
+  });
+  return lines.join('\n');
+}
+
+function fxRenderGeminiChatHistory() {
+  var box = document.getElementById('fxGeminiChatHistory');
+  if (!box) return;
+  if (FX_GEMINI_CHAT_HISTORY.length === 0) {
+    box.innerHTML = '<div style="color:var(--dim)">Питай нещо за резултатите от проследяването — Gemini вижда пълната статистика и детайли по мач.</div>';
+    return;
+  }
+  box.innerHTML = FX_GEMINI_CHAT_HISTORY.map(function(msg){
+    if (msg.role === 'user') {
+      return '<div style="text-align:right;margin-bottom:.4rem"><span style="background:rgba(56,189,248,.15);padding:.3rem .6rem;border-radius:6px;display:inline-block">' + msg.text.replace(/</g,'&lt;') + '</span></div>';
+    }
+    return '<div style="margin-bottom:.4rem"><span style="background:rgba(167,139,250,.12);padding:.3rem .6rem;border-radius:6px;display:inline-block">' + geminiFormat(msg.text) + '</span></div>';
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+async function fxSendGeminiChat() {
+  var input = document.getElementById('fxGeminiChatInput');
+  var question = input.value.trim();
+  if (!question) return;
+  input.value = '';
+
+  var key = localStorage.getItem('xgpro_gemini_key') || '';
+  var model = localStorage.getItem('xgpro_gemini_model') || 'gemini-2.5-flash';
+  if (!key) {
+    FX_GEMINI_CHAT_HISTORY.push({ role:'assistant', text:'⚠ Въведи Gemini API Key в ⚙️ Настройки → 🤖 Gemini AI' });
+    fxRenderGeminiChatHistory();
+    return;
+  }
+
+  FX_GEMINI_CHAT_HISTORY.push({ role:'user', text: question });
+  FX_GEMINI_CHAT_HISTORY.push({ role:'assistant', text:'⏳ Мисля...' });
+  fxRenderGeminiChatHistory();
+
+  var summary = fxBuildTrackingSummaryForGemini();
+  var convo = FX_GEMINI_CHAT_HISTORY.slice(0, -2).map(function(m){
+    return (m.role==='user'?'Потребител: ':'Ти: ') + m.text;
+  }).join('\n');
+
+  var prompt = 'Ти анализираш резултатите от проследяване на футболни прогнози (Пълен модел OA+Pinnacle срещу Само OA).\n\n' +
+    'ДАННИ:\n' + summary + '\n\n' +
+    (convo ? 'ПРЕДИШЕН РАЗГОВОР:\n' + convo + '\n\n' : '') +
+    'ВЪПРОС: ' + question + '\n\n' +
+    'Отговори на български, конкретно и по същество, базирайки се на данните по-горе. Максимум 200 думи, без излишни въведения.';
+
+  try {
+    var result = await geminiCall(key, model, prompt, { temperature: 0.4, maxOutputTokens: 1500 });
+    FX_GEMINI_CHAT_HISTORY[FX_GEMINI_CHAT_HISTORY.length - 1] = { role:'assistant', text: result.text };
+  } catch(e) {
+    FX_GEMINI_CHAT_HISTORY[FX_GEMINI_CHAT_HISTORY.length - 1] = { role:'assistant', text: '❌ ' + e.message };
+  }
+  fxRenderGeminiChatHistory();
+}
+
 function fxClearFilters() {
   FX_FILTERS = [];
   FX_VIEW = null;
@@ -29706,8 +29802,8 @@ function mwCalc() {
       ' — коеф. ' + best[2] + ' (edge ' + (parseFloat(best[1])>0?'+':'') + parseFloat(best[1]).toFixed(1) + '%)</div>' : '') +
     (CC.blendLabel ? '<div class="mw-src">Модел: ' + CC.blendLabel + '</div>' : '') +
     '<div style="display:flex;gap:.5rem;margin-top:.5rem">' +
-      '<button class="btn btn-sec" style="flex:1" onclick="mwToggleAddLog()">➕ Добави в лог</button>' +
-      '<button class="btn" style="flex:1;background:linear-gradient(135deg,#a78bfa,#7b61ff);color:#fff;font-weight:600" onclick="mwAskGemini()">✨ Gemini анализ</button>' +
+      '<button class="btn btn-sec" style="flex:1;width:auto;margin-top:0" onclick="mwToggleAddLog()">➕ Добави в лог</button>' +
+      '<button class="btn" style="flex:1;width:auto;margin-top:0;background:linear-gradient(135deg,#a78bfa,#7b61ff);color:#fff;font-weight:600" onclick="mwAskGemini()">✨ Gemini анализ</button>' +
     '</div>' +
     '<div id="mwAddLogPanel" style="display:none;margin-top:.5rem"></div>' +
     '<div id="mwGeminiResult" style="display:none;margin-top:.5rem;background:#0a1429;border:1px solid rgba(167,139,250,.25);border-radius:8px;padding:.6rem;font-size:.66rem;line-height:1.6"></div>';
