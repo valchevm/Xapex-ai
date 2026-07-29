@@ -3126,6 +3126,11 @@ input::placeholder, textarea::placeholder {
       </div>
       <button onclick="fxTrackVisibleMatches()" class="btn btn-p" style="width:100%;font-size:.65rem;padding:.5rem;margin-bottom:.5rem">🎯 Маркирай видимите мачове за проследяване</button>
       <div id="fxTrackStatus" style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem"></div>
+      <div onclick="document.getElementById('fxResultsCsvInput').click()"
+        style="border:1.5px dashed rgba(74,222,128,.3);border-radius:7px;padding:.5rem;text-align:center;cursor:pointer;background:#0a1429;margin-bottom:.5rem">
+        <div style="font-size:.6rem;font-weight:600;color:#4ade80" id="fxResultsCsvText">📁 Качи CSV с резултати (вместо ръчно)</div>
+        <input type="file" id="fxResultsCsvInput" accept=".csv" hidden onchange="fxImportResultsCsv(event)">
+      </div>
       <div style="display:flex;gap:.5rem">
         <button onclick="fxShowTrackedPending()" class="btn btn-sec" style="flex:1;width:auto;margin-top:0;font-size:.63rem;padding:.5rem">📝 Въведи резултати</button>
         <button onclick="fxShowTrackAnalysis()" class="btn btn-sec" style="flex:1;width:auto;margin-top:0;font-size:.63rem;padding:.5rem">📊 Анализ</button>
@@ -26165,6 +26170,73 @@ function fxRecordResult(id, wasCorrect) {
   fxSaveTracked();
   fxSyncTrackedToOracle(t);
   fxShowTrackedPending();
+}
+
+// ── Качване на CSV с реални резултати — вместо ръчно ✅/❌ за всеки мач ──
+function fxImportResultsCsv(event) {
+  var file = event.target.files && event.target.files[0];
+  if (!file) return;
+  var textEl = document.getElementById('fxResultsCsvText');
+  if (textEl) textEl.textContent = 'Обработка...';
+
+  var reader = new FileReader();
+  reader.onload = function(e){
+    try {
+      var lines = e.target.result.split(/\r?\n/).filter(function(l){ return l.trim(); });
+      if (lines.length < 2) { if (textEl) textEl.textContent = '⚠ Празен файл'; return; }
+      var headers = parseCSVLine(lines[0]).map(function(h){ return h.trim().toLowerCase(); });
+      var idx = {}; headers.forEach(function(h,i){ idx[h]=i; });
+      var hgIdx = idx['home_goals'], agIdx = idx['away_goals'];
+      var htIdx = idx['home_team'], atIdx = idx['away_team'];
+      if (htIdx==null || atIdx==null || hgIdx==null || agIdx==null) {
+        if (textEl) textEl.textContent = '❌ Нужни колони: home_team,away_team,home_goals,away_goals';
+        return;
+      }
+
+      var matched = 0, notFound = 0;
+      var pending = FX_TRACKED.filter(function(t){ return t.result == null; });
+      for (var li = 1; li < lines.length; li++) {
+        var vals = parseCSVLine(lines[li]);
+        var home = (vals[htIdx]||'').trim(), away = (vals[atIdx]||'').trim();
+        var hg = parseInt(vals[hgIdx], 10), ag = parseInt(vals[agIdx], 10);
+        if (!home || !away || isNaN(hg) || isNaN(ag)) continue;
+
+        var found = pending.filter(function(t){ return t.home === home && t.away === away; });
+        if (!found.length) { notFound++; continue; }
+
+        found.forEach(function(t){
+          var correct = fxCheckMarketOutcome(t.market, hg, ag);
+          t.result = correct ? 'win' : 'lose';
+          t.correct = correct;
+          fxSyncTrackedToOracle(t);
+          matched++;
+        });
+      }
+      fxSaveTracked();
+      if (textEl) textEl.textContent = '📁 Качи CSV с резултати (вместо ръчно)';
+      var st = document.getElementById('fxTrackStatus');
+      if (st) st.innerHTML = '✅ Обработени ' + matched + ' прогнози' + (notFound ? ' · ' + notFound + ' реда без съвпадение в проследяването' : '');
+      fxShowTrackAnalysis();
+    } catch(err) {
+      if (textEl) textEl.textContent = '❌ Грешка: ' + err.message;
+      console.error('[fxImportResultsCsv]', err);
+    }
+    document.getElementById('fxResultsCsvInput').value = '';
+  };
+  reader.readAsText(file);
+}
+
+// Определя дали прогнозата за даден пазар се е сбъднала, от реалните голове
+function fxCheckMarketOutcome(market, homeGoals, awayGoals) {
+  var total = homeGoals + awayGoals;
+  switch (market) {
+    case '1':    return homeGoals > awayGoals;
+    case '2':    return awayGoals > homeGoals;
+    case 'O25':  return total > 2.5;
+    case 'U25':  return total < 2.5;
+    case 'BTTS': return homeGoals > 0 && awayGoals > 0;
+    default:     return false;
+  }
 }
 
 function fxShowTrackAnalysis() {
