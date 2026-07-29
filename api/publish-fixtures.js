@@ -40,15 +40,27 @@ export default async function handler(req, res) {
       const q = encodeURIComponent(JSON.stringify({ expires_at: { "$lt": nowIso } }));
       const expd = await oraFetch(`/${TABLE}/?q=${q}&fields=id&limit=500`, "GET");
       const items = expd.json?.items || [];
-      for (const it of items) {
-        await oraFetch(`/${TABLE}/${it.id}`, "DELETE");
+      // ✅ Паралелно вместо последователно — иначе при много "изтекли"
+      // редове това самò може да изяде голяма част от timeout бюджета
+      // преди дори да стигнем до реалния upsert по-долу.
+      const CLEANUP_BATCH = 20;
+      for (let i = 0; i < items.length; i += CLEANUP_BATCH) {
+        const batch = items.slice(i, i + CLEANUP_BATCH);
+        await Promise.all(batch.map(function(it){ return oraFetch(`/${TABLE}/${it.id}`, "DELETE"); }));
       }
     } catch (e) { /* swallow cleanup errors */ }
 
     // ── Upsert всеки ред (GET по fixture_id → PUT или POST) ──
+    // ✅ ФИКС: при много редове (100+) СТРИКТНО последователната обработка
+    // (2 Oracle round-trips на ред) лесно надвишава Vercel-ия timeout —
+    // затова "0/131 публикувани" при по-големи batch-ове. Обработваме
+    // на ПАРАЛЕЛНИ партиди (15 наведнъж) — драстично намалява общото
+    // време, без да претоварва Oracle с ВСИЧКИ 260+ заявки едновременно.
     let okCount = 0;
     const errors = [];
-    for (const row of rows) {
+    const BATCH_SIZE = 15;
+
+    async function processRow(row) {
       try {
         const q = encodeURIComponent(JSON.stringify({ fixture_id: row.fixture_id }));
         const existing = await oraFetch(`/${TABLE}/?q=${q}`, "GET");
@@ -60,16 +72,25 @@ export default async function handler(req, res) {
           delete updRow.expires_at;
           const putId = items[0].id != null ? items[0].id : items[0].fixture_id;
           const r = await oraFetch(`/${TABLE}/${putId}`, "PUT", updRow);
-          if (r.ok) okCount++;
-          else errors.push(`${row.fixture_id}: HTTP ${r.status} (PUT id=${putId}) rowKeys=[${Object.keys(items[0]).join(',')}] ${r.text.slice(0, 200)}`);
+          if (r.ok) return { ok: true };
+          return { ok: false, error: `${row.fixture_id}: HTTP ${r.status} (PUT id=${putId}) rowKeys=[${Object.keys(items[0]).join(',')}] ${r.text.slice(0, 200)}` };
         } else {
           const r = await oraFetch(`/${TABLE}/`, "POST", row);
-          if (r.ok) okCount++;
-          else errors.push(`${row.fixture_id}: HTTP ${r.status} (POST) ${r.text.slice(0, 150)}`);
+          if (r.ok) return { ok: true };
+          return { ok: false, error: `${row.fixture_id}: HTTP ${r.status} (POST) ${r.text.slice(0, 150)}` };
         }
       } catch (e) {
-        errors.push(`${row.fixture_id}: ${e.message}`);
+        return { ok: false, error: `${row.fixture_id}: ${e.message}` };
       }
+    }
+
+    for (let i = 0; i < rows.length; i += BATCH_SIZE) {
+      const batch = rows.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(batch.map(processRow));
+      results.forEach(function(r){
+        if (r.ok) okCount++;
+        else errors.push(r.error);
+      });
     }
 
     res.status(200).json({ ok: okCount > 0, count: okCount, total: rows.length, errors });
