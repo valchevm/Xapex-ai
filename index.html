@@ -3084,6 +3084,16 @@ input::placeholder, textarea::placeholder {
       <div id="fxFullCsvResult" style="margin-top:.5rem;font-size:.6rem;color:var(--dim)"></div>
     </div>
 
+    <!-- ── Филтър по дата — показва мачове само за избрана дата ── -->
+    <div style="background:#07101f;border:1px solid rgba(56,189,248,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
+      <div style="font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.5rem">📅 Филтър по дата</div>
+      <div style="display:flex;gap:.5rem">
+        <input type="date" id="fxDateFilterInput" style="flex:1;padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.65rem;font-family:var(--mono)" onchange="fxApplyDateFilter()">
+        <button onclick="fxClearDateFilter()" class="btn btn-sec" style="width:auto;margin-top:0;font-size:.63rem;padding:.4rem .8rem">✕ Всички дати</button>
+      </div>
+      <div id="fxDateFilterResult" style="margin-top:.4rem;font-size:.58rem;color:var(--dim)"></div>
+    </div>
+
     <!-- ── Филтър по прогноза (модел/пазар/коефициент/подредба) ── -->
     <div style="background:#07101f;border:1px solid rgba(167,139,250,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
       <div style="font-size:.68rem;color:#a78bfa;font-weight:600;margin-bottom:.5rem">🎯 Филтър по прогноза</div>
@@ -24952,6 +24962,13 @@ let _cloudFxIsLoading = false;
 // Запазваме днешните + бъдещите. Това е "tomorrow purge" — всеки ден сутринта,
 // първото зареждане автоматично чисти вчерашните.
 function cloudFxPurgeOldDates() {
+  // ✅ ПРЕМАХНАТО (по заявка) — мачове с минала дата вече НЕ се
+  // изтриват автоматично. Потребителят иска да може да качва мачове
+  // за произволна дата (минала или бъдеща), да останат заредени, и
+  // само да показват за коя дата/час е началото им.
+  return 0;
+}
+function cloudFxPurgeOldDates_DEPRECATED() {
   if (!FX_PASTED || typeof FX_PASTED !== 'object') return 0;
   var now = new Date();
   var pad = function(n){ return (n<10?'0':'') + n; };
@@ -26071,6 +26088,9 @@ function fxApplyModelFilter() {
   var flat = [];
   Object.keys(FX_PASTED).forEach(function(country){
     FX_PASTED[country].forEach(function(m){
+      // ✅ Зачитаме активния филтър по дата (ако има) — двата филтъра
+      // работят ЗАЕДНО, не се презаписват взаимно.
+      if (FX_ACTIVE_DATE_FILTER && (m.match_date||'').slice(0,10) !== FX_ACTIVE_DATE_FILTER) return;
       // ✅ Изисква поне минимална прогноза — иначе филтърът по пазар/
       // коефициент/подредба няма какво да сравнява за този мач.
       if (!m.modelProbs && !m.oaProbs) return;
@@ -26124,10 +26144,11 @@ function fxClearModelFilter() {
   document.getElementById('fxModelFilterMaxOdds').value = '';
   document.getElementById('fxModelFilterSort').value = '';
   window.FX_MODEL_SORT_ACTIVE = false;
-  FX_VIEW = null;
+  // ✅ Пресъздаваме през общата функция — запазва датовия филтър, ако
+  // е активен, вместо просто да нулира FX_VIEW.
+  fxRebuildFxView();
   var resEl = document.getElementById('fxModelFilterResult');
   if (resEl) resEl.textContent = '';
-  fxRenderPastedCountries();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -26771,6 +26792,57 @@ function fxMarkLoggedFixtures() {
   });
 }
 
+var FX_MONTHS_BG = ['яну','фев','мар','апр','май','юни','юли','авг','сеп','окт','ное','дек'];
+function fxFormatMatchDate(dateStr) {
+  var parts = (dateStr || '').slice(0,10).split('-');
+  if (parts.length !== 3) return dateStr || '';
+  var d = parseInt(parts[2], 10), mo = parseInt(parts[1], 10) - 1;
+  if (isNaN(d) || mo < 0 || mo > 11) return dateStr;
+  return d + ' ' + FX_MONTHS_BG[mo];
+}
+
+// ── Филтър по дата — глобален, за да работи ЗАЕДНО с филтъра по
+// прогноза (двата могат да са активни едновременно). ──
+var FX_ACTIVE_DATE_FILTER = null; // 'YYYY-MM-DD' или null = всички дати
+
+function fxApplyDateFilter() {
+  var input = document.getElementById('fxDateFilterInput');
+  FX_ACTIVE_DATE_FILTER = input.value || null;
+  fxRebuildFxView();
+  var resEl = document.getElementById('fxDateFilterResult');
+  if (resEl) {
+    var count = 0;
+    Object.keys(FX_PASTED).forEach(function(c){ (FX_PASTED[c]||[]).forEach(function(m){ if ((m.match_date||'').slice(0,10) === FX_ACTIVE_DATE_FILTER) count++; }); });
+    resEl.textContent = FX_ACTIVE_DATE_FILTER ? ('✅ ' + count + ' мача на ' + fxFormatMatchDate(FX_ACTIVE_DATE_FILTER)) : '';
+  }
+}
+
+function fxClearDateFilter() {
+  FX_ACTIVE_DATE_FILTER = null;
+  var input = document.getElementById('fxDateFilterInput');
+  if (input) input.value = '';
+  fxRebuildFxView();
+  var resEl = document.getElementById('fxDateFilterResult');
+  if (resEl) resEl.textContent = '';
+}
+
+// ── Пресъздава FX_VIEW от FX_PASTED, зачитайки активния филтър по
+// дата (ако има). Ползва се както от датата, така и от прогнозата,
+// за да могат двата филтъра да работят ЗАЕДНО. ──
+function fxRebuildFxView() {
+  if (!FX_ACTIVE_DATE_FILTER) { FX_VIEW = null; fxRenderPastedCountries(); return; }
+  var view = {};
+  Object.keys(FX_PASTED).forEach(function(country){
+    var filtered = (FX_PASTED[country] || []).filter(function(m){
+      return (m.match_date || '').slice(0,10) === FX_ACTIVE_DATE_FILTER;
+    });
+    if (filtered.length) view[country] = filtered;
+  });
+  FX_VIEW = view;
+  window.FX_MODEL_SORT_ACTIVE = false;
+  fxRenderPastedCountries();
+}
+
 function fxRenderPastedCountries() {
   var container = document.getElementById('fxPastedCountries');
   var listDiv   = document.getElementById('fxPastedList');
@@ -27017,6 +27089,7 @@ function fxRenderPastedCountries() {
           resultBadge +
         '</div>' +
         '<div class="fx-match-meta">' +
+          (m.match_date ? '<span class="fx-match-date" style="color:var(--acc);font-weight:600;margin-right:.3rem">' + fxFormatMatchDate(m.match_date) + '</span>' : '') +
           (m.time ? '<span class="fx-match-time">' + m.time + '</span>' : '') +
           (m.pos  ? '<span class="fx-match-pos">' + m.pos  + '</span>' : '') +
           '<span class="' + qualClass + '">' + (m.quality||'') + '</span>' +
