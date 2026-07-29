@@ -3118,6 +3118,15 @@ input::placeholder, textarea::placeholder {
       <div id="fxModelFilterResult" style="margin-top:.4rem;font-size:.58rem;color:var(--dim)"></div>
     </div>
 
+    <!-- ── Ръчна публикация в BetPro — 3 режима ── -->
+    <div style="background:#07101f;border:1px solid rgba(56,189,248,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
+      <div style="font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.5rem">📤 Публикувай в BetPro</div>
+      <button onclick="fxPublishBetProManual('full')" class="btn btn-p" style="width:100%;font-size:.63rem;padding:.5rem;margin-bottom:.4rem">🧠 Само с прогноза от пълния модел (OA+Pinnacle)</button>
+      <button onclick="fxPublishBetProManual('oa')" class="btn btn-sec" style="width:100%;font-size:.63rem;padding:.5rem;margin-bottom:.4rem">🎯 Само с OA модел (чист OA)</button>
+      <button onclick="fxPublishBetProManual('all')" class="btn btn-sec" style="width:100%;font-size:.63rem;padding:.5rem">📋 Всички мачове с каквато и да е прогноза</button>
+      <div id="fxPublishBetProResult" style="margin-top:.5rem;font-size:.58rem;color:var(--dim)"></div>
+    </div>
+
     <!-- ── Проследяване на резултати (маркирай → въведи резултат → анализ) ── -->
     <div style="background:#07101f;border:1px solid rgba(74,222,128,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
       <div style="font-size:.68rem;color:#4ade80;font-weight:600;margin-bottom:.5rem">📈 Проследяване на резултати</div>
@@ -25077,7 +25086,8 @@ function fxBetproProbForMarket(pred, market) {
   }
 }
 
-async function cloudFxPublishToPublic() {
+async function cloudFxPublishToPublic(mode) {
+  mode = mode || 'all'; // 'full' = само OA+Pinnacle blend, 'oa' = само чист OA, 'all' = всичко с прогноза
   if (!FX_PASTED || Object.keys(FX_PASTED).length === 0) {
     return false;
   }
@@ -25114,6 +25124,31 @@ async function cloudFxPublishToPublic() {
         } catch(e) { pred = null; }
       }
 
+      // ✅ Режим "oa" — публикуваме ЧИСТИТЕ OA вероятности директно,
+      // независимо какво е изчислил пълния blend (ако има такъв).
+      if (mode === 'oa') {
+        var oa = m.oaProbs;
+        if (!oa || oa.home == null) {
+          skipped.push((m.home||'?') + ' vs ' + (m.away||'?') + ' [' + country + '] — няма OA вероятност');
+          return;
+        }
+        pred = {
+          p1: oa.home, pX: oa.draw, p2: oa.away,
+          pO25: oa.o25, pU25: oa.o25 != null ? 100 - oa.o25 : null,
+          pBTTS: oa.btts, pBTTSno: oa.btts != null ? 100 - oa.btts : null,
+          lambdaH: 0, lambdaA: 0
+        };
+      }
+      // ✅ Режим "full" — публикуваме САМО мачове, при които моделът
+      // реално е ползвал Pinnacle (не чист OA fallback, не Poisson-само).
+      else if (mode === 'full') {
+        var bl = m.blendLabel || '';
+        if (bl.indexOf('Pinnacle') === -1 || bl.indexOf('OA') === -1) {
+          skipped.push((m.home||'?') + ' vs ' + (m.away||'?') + ' [' + country + '] — не е пълен OA+Pinnacle blend (' + (bl || 'без прогноза') + ')');
+          return;
+        }
+      }
+
       // ✅ Публикуваме в BetPro САМО мачове с реална прогноза от модела —
       // без pred (напр. недостатъчно статистика) не се изпращат.
       if (!pred) {
@@ -25123,6 +25158,16 @@ async function cloudFxPublishToPublic() {
 
       // Top market и alternatives
       var topMarket = m.topMarket;
+      // ✅ Режим "oa" — топ пазарът трябва да идва от ЧИСТИТЕ OA
+      // вероятности, не от избора на пълния blend (иначе биха могли
+      // да са несъвместими — публикуван пазар от единия модел,
+      // вероятност от другия).
+      if (mode === 'oa') {
+        var oaMap = { '1':pred.p1, 'X':pred.pX, '2':pred.p2, 'O2.5':pred.pO25, 'U2.5':pred.pU25, 'BTTS':pred.pBTTS };
+        var bestOaKey = null, bestOaVal = -1;
+        Object.keys(oaMap).forEach(function(k){ if (oaMap[k] != null && oaMap[k] > bestOaVal) { bestOaVal = oaMap[k]; bestOaKey = k; } });
+        topMarket = bestOaKey ? { mkt: bestOaKey, prob: bestOaVal, conf: 99, col: 'var(--acc)' } : null;
+      }
       var altMarkets = (m.signals || []).slice(1).map(function(s){
         return { mkt: s.mkt, prob: s.strength };
       });
@@ -25251,7 +25296,28 @@ async function cloudFxPublishToPublic() {
       showToast('❌ Грешка при публикуване в BetPro: ' + errors[0], 'error');
     }
   }
+  // ✅ Детайлен резултат за ръчните бутони (fxPublishBetProManual) —
+  // без да чупим съществуващите извиквания, които четат само boolean.
+  window.FX_LAST_PUBLISH_RESULT = { mode: mode, count: okCount, total: rows.length, skipped: skipped.length, errors: errors.length };
   return okCount > 0;
+}
+
+async function fxPublishBetProManual(mode) {
+  var resEl = document.getElementById('fxPublishBetProResult');
+  var labels = { full: '🧠 Пълен модел (OA+Pinnacle)', oa: '🎯 Само OA', all: '📋 Всички' };
+  if (resEl) resEl.textContent = '⏳ Публикуване (' + labels[mode] + ')...';
+
+  try {
+    await cloudFxPublishToPublic(mode);
+    var r = window.FX_LAST_PUBLISH_RESULT || {};
+    if (resEl) {
+      resEl.innerHTML = '✅ ' + (r.count||0) + '/' + (r.total||0) + ' публикувани (' + labels[mode] + ')' +
+        (r.skipped ? ' · ' + r.skipped + ' пропуснати' : '') +
+        (r.errors ? ' · <span style="color:#f87171">' + r.errors + ' грешки</span>' : '');
+    }
+  } catch(e) {
+    if (resEl) resEl.innerHTML = '❌ ' + e.message;
+  }
 }
 
 async function cloudFxLoad() {
@@ -29902,6 +29968,7 @@ function mwCalc() {
   var m = (FX_PASTED[country] || [])[idx];
   if (m) {
     m._fullCalc = true;
+    m.blendLabel = CC.blendLabel || '';
     m.modelProbs = {
       p1: CC.pH*100, pX: CC.pD*100, p2: CC.pA*100,
       pO25: CC.pO*100, pU25: CC.pU*100,
