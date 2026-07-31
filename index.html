@@ -21759,6 +21759,13 @@ function oddsSyncToFxPasted() {
     };
 
     if (existing) {
+      // ✅ КРИТИЧНО: ако мачът е дошъл от пълен CSV импорт (има вече
+      // свои коефициенти + изчислена прогноза), НЕ позволяваме на
+      // Odds-API sync-а тихо да ги презапише с данни от друг източник.
+      // Точно това причиняваше грешни коефициенти в BetPro — CSV
+      // мачът показваше правилни 1.4/2.75, но след Odds-API sync
+      // ставаше "4/5" от съвсем различен feed.
+      if (existing._fullCsvImport) { syncedCount++; return; }
       // Update existing — запазваме stats и user marks
       Object.assign(existing, fxMatch);
     } else {
@@ -26063,6 +26070,16 @@ function fxRemoveFilter(idx) {
 // тук филтрираме по РЕЗУЛТАТА на модела, не по суровите данни.
 // ═══════════════════════════════════════════════════════════════
 function fxGetMarketProbOdds(m, market, source) {
+  // ✅ "Пълен модел" трябва да означава РЕАЛНО OA+Pinnacle blend, не
+  // каквато и да е прогноза (всеки калкулиран мач ИМА число за всеки
+  // пазар, дори при чист OA fallback — затова преди филтърът "минаваше"
+  // за всичките 285 мача, независимо дали Pinnacle реално е ползван).
+  if (source === 'full') {
+    var bl = m.blendLabel || '';
+    if (bl.indexOf('Pinnacle') === -1 || bl.indexOf('OA') === -1) {
+      return { prob: null, odd: null };
+    }
+  }
   var probs = (source === 'oa') ? (m.oaProbs || {}) : (m.modelProbs || {});
   var odds = m.odds || {};
   var isOA = (source === 'oa');
@@ -30108,9 +30125,16 @@ function mwCalc() {
 }
 
 function mwFindRow(key) {
-  var rows = document.querySelectorAll('.fx-match-item[data-mw-key]');
-  for (var i=0;i<rows.length;i++) { if (rows[i].getAttribute('data-mw-key') === key) return rows[i]; }
-  return null;
+  // ✅ Директен CSS атрибут селектор вместо querySelectorAll + линеен
+  // scan — при 285 мача това превръщаше mwRenderAllBadges() в O(N²)
+  // (до ~81 000 сравнения при всяко извикване), причинявайки видимо
+  // насичане/freeze при скролване, тригвано 150мс след ВСЯКА промяна
+  // в списъка (MutationObserver). Escape-ваме кавички в key за валиден CSS селектор.
+  try {
+    return document.querySelector('.fx-match-item[data-mw-key="' + key.replace(/"/g,'\\"') + '"]');
+  } catch(e) {
+    return null;
+  }
 }
 
 function mwRenderRowBadge(key) {
@@ -30180,7 +30204,11 @@ function mwObserveList() {
   if (!el || el === _mwListEl) return;
   _mwListEl = el;
   var mo = new MutationObserver(function(){ clearTimeout(window._mwBadgeTimer); window._mwBadgeTimer = setTimeout(mwRenderAllBadges, 150); });
-  mo.observe(el, {childList:true, subtree:true});
+  // ✅ БЕЗ subtree:true — само директни childList промени в контейнера
+  // (пълно пре-рендиране на списъка). С subtree:true observer-ът
+  // тригваше себе си от собствените промени на mwRenderRowBadge
+  // (добавяне/премахване на badge елементи), създавайки ненужен цикъл.
+  mo.observe(el, {childList:true});
 }
 document.addEventListener('DOMContentLoaded', function(){ mwObserveList(); setTimeout(mwRenderAllBadges, 600); });
 setInterval(mwObserveList, 2000);
