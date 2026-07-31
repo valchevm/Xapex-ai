@@ -25218,6 +25218,11 @@ async function cloudFxPublishToPublic(mode) {
       }
 
       var odds = m.odds_closing || m.odds || {};
+      // ✅ Diagnostic — за да можем ТОЧНО да проследим откъде идват
+      // коефициентите при следващ проблем, вместо да гадаем.
+      if (window.FX_DEBUG_PUBLISH_ODDS) {
+        console.log('[publicFx-odds]', m.home, 'vs', m.away, '| m.odds=', JSON.stringify(m.odds), '| m.odds_closing=', JSON.stringify(m.odds_closing), '| _fullCsvImport=', !!m._fullCsvImport, '| _oddsApiId=', m._oddsApiId || 'none');
+      }
 
       // Уникален fixture_id (ако няма от OA → генерираме deterministic)
       var fixId = m.fixture_id ? String(m.fixture_id) :
@@ -26868,6 +26873,26 @@ function fxRenderPastedCountries() {
 
   var SRC = FX_VIEW || FX_PASTED;
   var countries = Object.keys(SRC).filter(function(c){return SRC[c].length>0;});
+
+  // ✅ Ясен, невъзможен за пропускане банер за активен филтър — за да
+  // няма съмнение дали филтърът реално ограничава списъка.
+  var bannerEl = document.getElementById('fxActiveFilterBanner');
+  if (!bannerEl) {
+    bannerEl = document.createElement('div');
+    bannerEl.id = 'fxActiveFilterBanner';
+    if (container.parentNode) container.parentNode.insertBefore(bannerEl, container);
+  }
+  if (FX_VIEW) {
+    var totalAll = 0;
+    Object.keys(FX_PASTED).forEach(function(c){ totalAll += (FX_PASTED[c]||[]).length; });
+    var totalFiltered = 0;
+    countries.forEach(function(c){ totalFiltered += SRC[c].length; });
+    bannerEl.style.cssText = 'display:block;background:rgba(167,139,250,.15);border:1px solid rgba(167,139,250,.4);border-radius:7px;padding:.5rem .7rem;margin-bottom:.5rem;font-size:.64rem;color:#a78bfa;font-weight:600';
+    bannerEl.innerHTML = '🎯 ФИЛТЪР АКТИВЕН — показани ' + totalFiltered + ' от общо ' + totalAll + ' мача';
+  } else {
+    bannerEl.style.display = 'none';
+  }
+
   if (countries.length === 0) { if (listDiv) listDiv.style.display='none'; return; }
 
   var total = 0;
