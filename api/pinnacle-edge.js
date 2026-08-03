@@ -37,8 +37,15 @@ export default async function handler(req, res) {
 
       let count = 0;
       const errors = [];
+      let seq = 0;
       for (const row of rows) {
+        // ✅ КРИТИЧНО: id колоната е VARCHAR2 PRIMARY KEY БЕЗ auto-generation
+        // (за разлика от value_bet_log, чиято id е auto-increment NUMBER).
+        // Без изрична стойност тук всеки INSERT нарушава PRIMARY KEY
+        // constraint-а (NULL) → HTTP 400 за буквално всеки ред.
+        const id = "pe_" + Date.now() + "_" + (seq++) + "_" + Math.random().toString(36).slice(2, 8);
         const payload = {
+          id,
           setting: row.setting || null,
           home: row.home || null,
           away: row.away || null,
