@@ -35,10 +35,22 @@ export default async function handler(req, res) {
       const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
       if (!rows.length) { res.status(400).json({ ok: false, error: "missing_rows" }); return; }
 
+      // ✅ Дубликат защита — теглим съществуващите сигнали и пропускаме
+      // редове, които вече присъстват (същия мач + пазар), вместо да
+      // създаваме нов ред при всяко повторно качване на същия файл.
+      const existingResp = await oraFetch(`/${TABLE}/?limit=500`, "GET");
+      const existingItems = existingResp.json?.items || [];
+      const dupKey = (r) =>
+        `${(r.home || "").trim().toLowerCase()}|${(r.away || "").trim().toLowerCase()}|${r.market_label || ""}`;
+      const existingKeys = new Set(existingItems.map(dupKey));
+
       let count = 0;
+      let skipped = 0;
       const errors = [];
       let seq = 0;
       for (const row of rows) {
+        if (existingKeys.has(dupKey(row))) { skipped++; continue; }
+        existingKeys.add(dupKey(row)); // за да не дублираме и вътре в СЪЩИЯ batch
         // ✅ КРИТИЧНО: id колоната е VARCHAR2 PRIMARY KEY БЕЗ auto-generation
         // (за разлика от value_bet_log, чиято id е auto-increment NUMBER).
         // Без изрична стойност тук всеки INSERT нарушава PRIMARY KEY
@@ -70,7 +82,7 @@ export default async function handler(req, res) {
         if (r.ok) count++;
         else errors.push(`${row.home} vs ${row.away}: HTTP ${r.status} ${r.text.slice(0, 150)}`);
       }
-      res.status(200).json({ ok: count > 0, count, total: rows.length, errors });
+      res.status(200).json({ ok: count > 0 || skipped > 0, count, skipped, total: rows.length, errors });
       return;
     }
 

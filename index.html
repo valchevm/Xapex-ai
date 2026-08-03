@@ -3874,6 +3874,7 @@ input::placeholder, textarea::placeholder {
 
     <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem">
       <span style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Сигнали</span>
+      <button class="btn btn-sec" style="font-size:.58rem;padding:3px 8px" onclick="peCleanDuplicates()">🧹 Изчисти дубликати</button>
       <button class="btn btn-sec" style="margin-left:auto;font-size:.58rem;padding:3px 8px" onclick="peLoadLog()">🔄 Обнови</button>
     </div>
     <div id="peTableWrap" style="font-size:.6rem;color:var(--dim);overflow-x:auto">Зареждане...</div>
@@ -12302,7 +12303,9 @@ function peSaveAllPending() {
     body: JSON.stringify({ rows: PE_PENDING })
   }).then(function(r){ return r.json(); }).then(function(data){
     if (data && data.ok) {
-      if (typeof showToast === 'function') showToast('✅ Запазени ' + (data.count||PE_PENDING.length) + ' сигнала', 'success');
+      var msg = '✅ Запазени ' + (data.count||0) + ' нови сигнала';
+      if (data.skipped) msg += ' · пропуснати ' + data.skipped + ' дубликата';
+      if (typeof showToast === 'function') showToast(msg, 'success');
       document.getElementById('pePasteInput').value = '';
       document.getElementById('pePreview').innerHTML = '';
       PE_PENDING = [];
@@ -12311,6 +12314,60 @@ function peSaveAllPending() {
       var detail = (data && Array.isArray(data.errors) && data.errors.length) ? data.errors.join(' · ') : (data && data.error) || 'непозната грешка';
       if (typeof showToast === 'function') showToast('❌ Грешка: ' + detail, 'error');
     }
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+  });
+}
+
+// ── Сканира за дубликати (същия мач + пазар) и трие излишните,
+// запазвайки записа с най-много попълнени резултатни данни. ──
+function peCleanDuplicates() {
+  if (!confirm('Сканирай и изтрий дублиращите се сигнали (същия мач + пазар)?')) return;
+  fetch('/api/pinnacle-edge').then(function(r){ return r.json(); }).then(async function(data){
+    var items = (data && data.items) || [];
+    var groups = {};
+    items.forEach(function(it){
+      var key = (it.home||'').trim().toLowerCase() + '|' + (it.away||'').trim().toLowerCase() + '|' + (it.market_label||'');
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(it);
+    });
+
+    function fillScore(it) {
+      var n = 0;
+      if (it.final_score_home != null) n++;
+      if (it.final_score_away != null) n++;
+      if (it.final_corners_home != null) n++;
+      if (it.final_corners_away != null) n++;
+      return n;
+    }
+
+    var toDelete = [];
+    Object.keys(groups).forEach(function(key){
+      var group = groups[key];
+      if (group.length < 2) return;
+      // Запазваме записа с НАЙ-МНОГО попълнени резултатни полета (или най-новия при равенство)
+      group.sort(function(a,b){
+        var fa = fillScore(a), fb = fillScore(b);
+        if (fa !== fb) return fb - fa;
+        return new Date(b.created_at||0) - new Date(a.created_at||0);
+      });
+      for (var i = 1; i < group.length; i++) toDelete.push(group[i].id);
+    });
+
+    if (!toDelete.length) {
+      if (typeof showToast === 'function') showToast('✅ Няма намерени дубликати', 'success');
+      return;
+    }
+
+    var deleted = 0;
+    for (var i = 0; i < toDelete.length; i++) {
+      try {
+        var r = await fetch('/api/pinnacle-edge', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: toDelete[i]}) }).then(function(x){return x.json();});
+        if (r && r.ok) deleted++;
+      } catch(e) {}
+    }
+    if (typeof showToast === 'function') showToast('🧹 Изтрити ' + deleted + ' дубликата', 'success');
+    peLoadLog();
   }).catch(function(e){
     if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
   });
@@ -12327,16 +12384,22 @@ function peDeleteRow(id) {
   }).catch(function(e){ console.warn('[peDeleteRow]', e.message); });
 }
 
-function peSaveScore(id, homeVal, awayVal) {
-  var h = homeVal === '' ? null : parseFloat(homeVal);
-  var a = awayVal === '' ? null : parseFloat(awayVal);
+function peSaveResult(id) {
+  function gv(elId) { var el = document.getElementById(elId); return el && el.value !== '' ? parseFloat(el.value) : null; }
+  var body = {
+    id: id,
+    final_score_home: gv('peHome_' + id),
+    final_score_away: gv('peAway_' + id),
+    final_corners_home: gv('peCornH_' + id),
+    final_corners_away: gv('peCornA_' + id)
+  };
   fetch('/api/pinnacle-edge', {
     method: 'PUT', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: id, final_score_home: h, final_score_away: a })
+    body: JSON.stringify(body)
   }).then(function(r){ return r.json(); }).then(function(data){
     if (data && data.ok) peLoadLog();
     else if (typeof showToast === 'function') showToast('❌ Грешка при запис на резултат', 'error');
-  }).catch(function(e){ console.warn('[peSaveScore]', e.message); });
+  }).catch(function(e){ console.warn('[peSaveResult]', e.message); });
 }
 
 function peRenderAnalysis(items, marketLabel) {
@@ -12670,18 +12733,21 @@ function peLoadLog() {
     var outcomeColor = { WIN:'var(--grn)', LOSE:'var(--red)', PUSH:'var(--dim)', PENDING:'var(--yel)' };
 
     var rows = items.map(function(it){
-      return '<tr style="border-bottom:1px solid var(--bord)">' +
+      var isCorners = it.setting === 'Corners';
+      return '<tr style="border-bottom:1px solid var(--bord)' + (isCorners ? ';background:rgba(167,139,250,.04)' : '') + '">' +
         '<td style="padding:.35rem;white-space:nowrap">' + escHtml(it.home) + ' <span style="color:var(--dim)">vs</span> ' + escHtml(it.away) + '</td>' +
         '<td style="padding:.35rem">' + escHtml(it.league||'—') + '</td>' +
-        '<td style="padding:.35rem">' + it.setting + '</td>' +
+        '<td style="padding:.35rem' + (isCorners ? ';color:#a78bfa;font-weight:600' : '') + '">' + it.setting + '</td>' +
         '<td style="padding:.35rem;white-space:nowrap">' + escHtml(it.market_label||'—') + '</td>' +
         '<td style="padding:.35rem">' + (it.fair_price!=null?it.fair_price:'—') + '</td>' +
         '<td style="padding:.35rem">' + (it.bet365_odds!=null?it.bet365_odds:'—') + '</td>' +
         '<td style="padding:.35rem;color:var(--grn)">' + (it.edge_pct!=null?it.edge_pct+'%':'—') + '</td>' +
         '<td style="padding:.35rem">' + (it.implied_prob!=null?it.implied_prob+'%':'—') + '</td>' +
         '<td style="padding:.35rem;white-space:nowrap">' + escHtml(it.kickoff_txt||'—') + '</td>' +
-        '<td style="padding:.35rem"><input id="peHome_' + it.id + '" type="number" step="1" value="' + (it.final_score_home!=null?it.final_score_home:'') + '" style="width:40px;font-size:.6rem;padding:2px" onchange="peSaveScore(\'' + it.id + '\', this.value, document.getElementById(\'peAway_' + it.id + '\').value)"></td>' +
-        '<td style="padding:.35rem"><input id="peAway_' + it.id + '" type="number" step="1" value="' + (it.final_score_away!=null?it.final_score_away:'') + '" style="width:40px;font-size:.6rem;padding:2px" onchange="peSaveScore(\'' + it.id + '\', document.getElementById(\'peHome_' + it.id + '\').value, this.value)"></td>' +
+        '<td style="padding:.35rem"><input id="peHome_' + it.id + '" type="number" step="1" value="' + (it.final_score_home!=null?it.final_score_home:'') + '" style="width:36px;font-size:.6rem;padding:2px" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
+        '<td style="padding:.35rem"><input id="peAway_' + it.id + '" type="number" step="1" value="' + (it.final_score_away!=null?it.final_score_away:'') + '" style="width:36px;font-size:.6rem;padding:2px" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
+        '<td style="padding:.35rem"><input id="peCornH_' + it.id + '" type="number" step="1" value="' + (it.final_corners_home!=null?it.final_corners_home:'') + '" style="width:36px;font-size:.6rem;padding:2px' + (isCorners?';border-color:#a78bfa':'') + '" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
+        '<td style="padding:.35rem"><input id="peCornA_' + it.id + '" type="number" step="1" value="' + (it.final_corners_away!=null?it.final_corners_away:'') + '" style="width:36px;font-size:.6rem;padding:2px' + (isCorners?';border-color:#a78bfa':'') + '" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
         '<td style="padding:.35rem;color:' + (outcomeColor[it.outcome]||'var(--dim)') + ';font-weight:700">' + it.outcome + '</td>' +
         '<td style="padding:.35rem;color:' + (it.profit>0?'var(--grn)':it.profit<0?'var(--red)':'var(--dim)') + '">' + (it.profit!=null ? (it.profit>=0?'+':'') + it.profit.toFixed(2) : '—') + '</td>' +
         '<td style="padding:.35rem"><button class="btn btn-sec" style="font-size:.55rem;padding:2px 6px" onclick="peDeleteRow(\'' + it.id + '\')">🗑</button></td>' +
@@ -12693,8 +12759,9 @@ function peLoadLog() {
         '<th style="padding:.35rem">Мач</th><th style="padding:.35rem">Лига</th><th style="padding:.35rem">Setting</th>' +
         '<th style="padding:.35rem">Пазар</th><th style="padding:.35rem">Fair</th><th style="padding:.35rem">Bet365</th>' +
         '<th style="padding:.35rem">Edge</th><th style="padding:.35rem">Implied</th><th style="padding:.35rem">Kickoff</th>' +
-        '<th style="padding:.35rem">Дом. гол</th><th style="padding:.35rem">Гост гол</th><th style="padding:.35rem">Изход</th>' +
-        '<th style="padding:.35rem">Профит</th><th style="padding:.35rem"></th>' +
+        '<th style="padding:.35rem">Дом. гол</th><th style="padding:.35rem">Гост гол</th>' +
+        '<th style="padding:.35rem;color:#a78bfa">Дом. корн.</th><th style="padding:.35rem;color:#a78bfa">Гост корн.</th>' +
+        '<th style="padding:.35rem">Изход</th><th style="padding:.35rem">Профит</th><th style="padding:.35rem"></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>';
   }).catch(function(e){
     wrap.innerHTML = '<div style="color:var(--red)">❌ ' + e.message + '</div>';
