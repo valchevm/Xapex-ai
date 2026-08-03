@@ -3875,6 +3875,7 @@ input::placeholder, textarea::placeholder {
     <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem">
       <span style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Сигнали</span>
       <button class="btn btn-sec" style="font-size:.58rem;padding:3px 8px" onclick="peCleanDuplicates()">🧹 Изчисти дубликати</button>
+      <button class="btn btn-sec" style="font-size:.58rem;padding:3px 8px;color:#f87171" onclick="peDeleteAllPending()">🗑 Изтрий всички pending</button>
       <button class="btn btn-sec" style="margin-left:auto;font-size:.58rem;padding:3px 8px" onclick="peLoadLog()">🔄 Обнови</button>
     </div>
     <div id="peTableWrap" style="font-size:.6rem;color:var(--dim);overflow-x:auto">Зареждане...</div>
@@ -12314,23 +12315,36 @@ function peParsePlainFormat(text) {
 
 // ── Изчислява изход (WIN/LOSE/PUSH/PENDING) + профит от резултат ──
 function peComputeOutcome(sig) {
-  if (sig.setting === 'Corners') {
+  // ✅ КРИТИЧЕН ФИКС: "Setting: Goals/Corners" НЕ определя пазара —
+  // определя го market_label (5-ти ред от сигнала). Setting има
+  // значение САМО за "Totals" пазар (дали Over/Under линията е за
+  // голове или корнери — самият пазарен текст не го казва явно).
+  // За "ML" пазар (краен победител) ВИНАГИ трябва да се гледат
+  // ГОЛОВЕ — отбор може да загуби "корнер битката", но пак да
+  // спечели мача. Преди този фикс, ML сигнал с Setting:Corners
+  // грешно чакаше/ползваше корнер данни за определяне на победител.
+  if (sig.market === 'ML') {
+    var h = sig.final_score_home, a = sig.final_score_away;
+    if (h == null || a == null || h === '' || a === '') return { outcome: 'PENDING', profit: null };
+    h = parseFloat(h); a = parseFloat(a);
+    if (isNaN(h) || isNaN(a)) return { outcome: 'PENDING', profit: null };
+    return peResolveTotalsOrML(sig, h, a);
+  }
+
+  if (sig.market === 'Totals' && sig.setting === 'Corners') {
     var ch = sig.final_corners_home, ca = sig.final_corners_away;
-    if (ch == null || ca == null || ch === '' || ca === '') {
-      return { outcome: 'PENDING', profit: null }; // все още няма корнер данни
-    }
+    if (ch == null || ca == null || ch === '' || ca === '') return { outcome: 'PENDING', profit: null };
     ch = parseFloat(ch); ca = parseFloat(ca);
     if (isNaN(ch) || isNaN(ca)) return { outcome: 'PENDING', profit: null };
     return peResolveTotalsOrML(sig, ch, ca);
   }
 
-  var h = sig.final_score_home, a = sig.final_score_away;
-  if (h == null || a == null || h === '' || a === '') {
-    return { outcome: 'PENDING', profit: null };
-  }
-  h = parseFloat(h); a = parseFloat(a);
-  if (isNaN(h) || isNaN(a)) return { outcome: 'PENDING', profit: null };
-  return peResolveTotalsOrML(sig, h, a);
+  // Totals + Setting: Goals (или непознат/липсващ setting — fallback на голове)
+  var h2 = sig.final_score_home, a2 = sig.final_score_away;
+  if (h2 == null || a2 == null || h2 === '' || a2 === '') return { outcome: 'PENDING', profit: null };
+  h2 = parseFloat(h2); a2 = parseFloat(a2);
+  if (isNaN(h2) || isNaN(a2)) return { outcome: 'PENDING', profit: null };
+  return peResolveTotalsOrML(sig, h2, a2);
 }
 
 // ── Споделена логика ML/Totals — ползва се и за голове, и за корнери ──
@@ -12458,6 +12472,32 @@ function peCleanDuplicates() {
   });
 }
 
+// ── Изтрива ВСИЧКИ чакащи (PENDING) сигнали наведнъж ──
+function peDeleteAllPending() {
+  fetch('/api/pinnacle-edge').then(function(r){ return r.json(); }).then(async function(data){
+    var items = (data && data.items) || [];
+    items.forEach(function(it){ it.outcome = peComputeOutcome(it).outcome; });
+    var pending = items.filter(function(it){ return it.outcome === 'PENDING'; });
+    if (!pending.length) {
+      if (typeof showToast === 'function') showToast('Няма pending сигнали за изтриване', 'info');
+      return;
+    }
+    if (!confirm('Изтрий всички ' + pending.length + ' чакащи (PENDING) сигнала? Не може да се отмени.')) return;
+
+    var deleted = 0;
+    for (var i = 0; i < pending.length; i++) {
+      try {
+        var r = await fetch('/api/pinnacle-edge', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: pending[i].id}) }).then(function(x){return x.json();});
+        if (r && r.ok) deleted++;
+      } catch(e) {}
+    }
+    if (typeof showToast === 'function') showToast('🗑 Изтрити ' + deleted + ' чакащи сигнала', 'success');
+    peLoadLog();
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+  });
+}
+
 function peDeleteRow(id) {
   if (!confirm('Изтрий този сигнал?')) return;
   fetch('/api/pinnacle-edge', {
@@ -12495,8 +12535,6 @@ function peRenderAnalysis(items, marketLabel) {
   var wins = items.filter(function(it){ return it.outcome === 'WIN'; }).length;
   var loses = items.filter(function(it){ return it.outcome === 'LOSE'; }).length;
   var pushes = items.filter(function(it){ return it.outcome === 'PUSH'; }).length;
-  var pendingCorners = items.filter(function(it){ return it.setting === 'Corners' && it.outcome === 'PENDING'; }).length;
-  var pendingGoals = items.filter(function(it){ return it.setting === 'Goals' && it.outcome === 'PENDING'; }).length;
 
   var decisiveN = wins + loses;
   var winRate = decisiveN ? (wins / decisiveN * 100) : 0;
@@ -12506,18 +12544,18 @@ function peRenderAnalysis(items, marketLabel) {
   var settledOdds = settled.map(function(it){ return it.bet365_odds; }).filter(function(o){ return o != null; });
   var avgOdds = settledOdds.length ? (settledOdds.reduce(function(a,b){return a+b;},0) / settledOdds.length) : 0;
   var breakEven = avgOdds > 1 ? (100 / avgOdds) : 0;
+  var pendingTotal = items.filter(function(it){ return it.outcome === 'PENDING'; }).length;
 
   box.innerHTML =
     '<div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.25);border-radius:8px;padding:.6rem">' +
       '<div style="font-size:.62rem;color:var(--acc);font-weight:600;margin-bottom:.4rem">📊 Анализ' + (marketLabel ? ' — ' + escHtml(marketLabel) : ' — всички пазари') + '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem;font-size:.6rem">' +
-        '<div>Общо сигнали: <b>' + total + '</b></div>' +
-        '<div>Разрешени: <b>' + settled.length + '</b></div>' +
-        '<div style="color:var(--grn)">WIN: <b>' + wins + '</b></div>' +
-        '<div style="color:var(--red)">LOSE: <b>' + loses + '</b></div>' +
-        '<div>PUSH: <b>' + pushes + '</b></div>' +
-        '<div>Чакащи (голове): <b>' + pendingGoals + '</b></div>' +
-        '<div>Чакащи (корнери): <b>' + pendingCorners + '</b></div>' +
+        '<div>' + total + ' срещи</div>' +
+        '<div>' + settled.length + ' с резултат</div>' +
+        '<div style="color:var(--grn)">' + wins + ' спечелени</div>' +
+        '<div style="color:var(--red)">' + loses + ' загубени</div>' +
+        '<div>' + pushes + ' push</div>' +
+        '<div style="color:var(--yel)">' + pendingTotal + ' чакащи</div>' +
         '<div>Успеваемост: <b style="color:' + (winRate>=50?'var(--grn)':'var(--red)') + '">' + winRate.toFixed(1) + '%</b></div>' +
         '<div>Профит: <b style="color:' + (totalProfit>=0?'var(--grn)':'var(--red)') + '">' + (totalProfit>=0?'+':'') + totalProfit.toFixed(2) + 'u</b></div>' +
         '<div>Yield/ROI: <b style="color:' + (yieldPct>=0?'var(--grn)':'var(--red)') + '">' + (yieldPct>=0?'+':'') + yieldPct.toFixed(1) + '%</b></div>' +
@@ -12556,8 +12594,7 @@ function peExportCsv() {
   var wins = items.filter(function(it){ return it.outcome === 'WIN'; }).length;
   var loses = items.filter(function(it){ return it.outcome === 'LOSE'; }).length;
   var pushes = items.filter(function(it){ return it.outcome === 'PUSH'; }).length;
-  var pendingCorners = items.filter(function(it){ return it.setting === 'Corners' && it.outcome === 'PENDING'; }).length;
-  var pendingGoals = items.filter(function(it){ return it.setting === 'Goals' && it.outcome === 'PENDING'; }).length;
+  var pendingTotal = items.filter(function(it){ return it.outcome === 'PENDING'; }).length;
   var decisiveN = wins + loses;
   var winRate = decisiveN ? (wins / decisiveN * 100) : 0;
   var totalProfit = settled.reduce(function(s, it){ return s + (it.profit || 0); }, 0);
@@ -12571,9 +12608,7 @@ function peExportCsv() {
   lines.push('# Pinnacle Edge — Анализ на филтрирани сигнали');
   lines.push('# Пазар: ' + (selectedMarket || 'всички'));
   lines.push('# Период: ' + (dateFrom || '—') + ' до ' + (dateTo || '—'));
-  lines.push('# Общо сигнали: ' + items.length);
-  lines.push('# Разрешени: ' + settled.length + ' (WIN: ' + wins + ', LOSE: ' + loses + ', PUSH: ' + pushes + ')');
-  lines.push('# Чакащи (голове): ' + pendingGoals + ', Чакащи (корнери): ' + pendingCorners);
+  lines.push('# ' + items.length + ' срещи, ' + settled.length + ' с резултат, ' + wins + ' спечелени, ' + loses + ' загубени, ' + pushes + ' push, ' + pendingTotal + ' чакащи');
   lines.push('# Успеваемост: ' + winRate.toFixed(1) + '%');
   lines.push('# Профит: ' + (totalProfit>=0?'+':'') + totalProfit.toFixed(2) + 'u');
   lines.push('# Yield/ROI: ' + (yieldPct>=0?'+':'') + yieldPct.toFixed(1) + '%');
@@ -12651,6 +12686,70 @@ function peFuzzyTeamMatch(a, b) {
   return shared.length >= minLen;
 }
 
+// ── Нормализира различни формати резултатни файлове в общ вид:
+// [{home, away, homeGoals, awayGoals, homeCorners, awayCorners}]
+// homeCorners/awayCorners остават null, ако файлът дава само общ
+// брой корнери (не може да се раздели надеждно). ──
+function peParseResultsFile(raw) {
+  var lines = raw.split(/\r?\n/).filter(function(l){ return l.trim(); });
+  if (lines.length < 2) return { rows: [], format: null, error: 'Празен файл' };
+
+  var delim = lines[0].indexOf(';') !== -1 ? ';' : ',';
+  var parseLine = delim === ';' ? peParseSemicolonLine : (function(l){ return peParseSemicolonLine(l.replace(/;/g,'\u0001')).map(function(s){return s.replace(/\u0001/g,';');}); });
+  // За comma-делимитирани файлове ползваме същия базов парсер, само с друг делимитер:
+  function parseCommaLine(line) {
+    var result = [], cur = '', inQ = false;
+    for (var i=0;i<line.length;i++){
+      var ch=line[i];
+      if (ch==='"'){inQ=!inQ;continue;}
+      if (ch===',' && !inQ){result.push(cur);cur='';continue;}
+      cur+=ch;
+    }
+    result.push(cur);
+    return result;
+  }
+  var splitLine = delim === ';' ? peParseSemicolonLine : parseCommaLine;
+
+  var headers = splitLine(lines[0]).map(function(h){ return h.trim(); });
+  var idx = {}; headers.forEach(function(h,i){ idx[h] = i; });
+
+  var rows = [];
+
+  if (idx['Отбор домакин'] !== undefined && idx['Отбор гост'] !== undefined && idx['Резултат'] !== undefined) {
+    // ── AiScore формат (; делимитер, Резултат="H-A", отделни корнер колони) ──
+    for (var li = 1; li < lines.length; li++) {
+      var vals = splitLine(lines[li]);
+      var home = (vals[idx['Отбор домакин']] || '').trim();
+      var away = (vals[idx['Отбор гост']] || '').trim();
+      var scoreM = (vals[idx['Резултат']] || '').trim().match(/(\d+)\s*-\s*(\d+)/);
+      if (!home || !away || !scoreM) continue;
+      var hc = idx['Корнери домакин'] !== undefined ? parseInt(vals[idx['Корнери домакин']], 10) : NaN;
+      var ac = idx['Корнери гост'] !== undefined ? parseInt(vals[idx['Корнери гост']], 10) : NaN;
+      rows.push({ home: home, away: away, homeGoals: parseInt(scoreM[1],10), awayGoals: parseInt(scoreM[2],10),
+        homeCorners: isNaN(hc) ? null : hc, awayCorners: isNaN(ac) ? null : ac });
+    }
+    return { rows: rows, format: 'AiScore', error: null };
+  }
+
+  if (idx['Home Team'] !== undefined && idx['Away Team'] !== undefined && idx['Home Goals'] !== undefined && idx['Away Goals'] !== undefined) {
+    // ── Английски формат (, делимитер, Home Goals/Away Goals отделно,
+    // но "Corners" е ЕДНА обединена колона (общо) — не може да се
+    // раздели на домакин/гост надеждно, затова остават null. ──
+    for (var li2 = 1; li2 < lines.length; li2++) {
+      var vals2 = splitLine(lines[li2]);
+      var home2 = (vals2[idx['Home Team']] || '').trim();
+      var away2 = (vals2[idx['Away Team']] || '').trim();
+      var hg = parseInt(vals2[idx['Home Goals']], 10);
+      var ag = parseInt(vals2[idx['Away Goals']], 10);
+      if (!home2 || !away2 || isNaN(hg) || isNaN(ag)) continue;
+      rows.push({ home: home2, away: away2, homeGoals: hg, awayGoals: ag, homeCorners: null, awayCorners: null });
+    }
+    return { rows: rows, format: 'English (само общо корнери, без домакин/гост разбивка)', error: null };
+  }
+
+  return { rows: [], format: null, error: 'Непознат формат — нужни колони: "Отбор домакин/Отбор гост/Резултат" (AiScore) или "Home Team/Away Team/Home Goals/Away Goals" (английски)' };
+}
+
 function peImportResultsCsv(event) {
   var file = event.target.files && event.target.files[0];
   if (!file) return;
@@ -12663,18 +12762,13 @@ function peImportResultsCsv(event) {
     (async function(){
       try {
         var raw = e.target.result.replace(/^\uFEFF/, '');
-        var lines = raw.split(/\r?\n/).filter(function(l){ return l.trim(); });
-        if (lines.length < 2) { if (resEl) resEl.textContent = '⚠ Празен файл'; return; }
-
-        var headers = peParseSemicolonLine(lines[0]).map(function(h){ return h.trim(); });
-        var idx = {}; headers.forEach(function(h,i){ idx[h] = i; });
-        var need = ['Отбор домакин','Отбор гост','Резултат'];
-        var missing = need.filter(function(h){ return idx[h] === undefined; });
-        if (missing.length) {
-          if (resEl) resEl.innerHTML = '❌ Липсват колони: ' + missing.join(', ');
+        var parsedFile = peParseResultsFile(raw);
+        if (parsedFile.error) {
+          if (resEl) resEl.innerHTML = '❌ ' + parsedFile.error;
           if (textEl) textEl.textContent = '📁 Качи AiScore CSV с резултати';
           return;
         }
+        var fileRows = parsedFile.rows;
 
         // ── Зареждаме текущите PENDING сигнали, за да съпоставим по имена ──
         var data = await fetch('/api/pinnacle-edge').then(function(r){ return r.json(); });
@@ -12689,15 +12783,11 @@ function peImportResultsCsv(event) {
           byKey[key].push(it);
         });
 
-        var matched = 0, notFound = 0, updateErrors = 0;
+        var matched = 0, notFound = 0, updateErrors = 0, ambiguous = 0;
         var matchedIds = {};
-        for (var li = 1; li < lines.length; li++) {
-          var vals = peParseSemicolonLine(lines[li]);
-          var home = (vals[idx['Отбор домакин']] || '').trim();
-          var away = (vals[idx['Отбор гост']] || '').trim();
-          var scoreRaw = (vals[idx['Резултат']] || '').trim();
-          var scoreM = scoreRaw.match(/(\d+)\s*-\s*(\d+)/);
-          if (!home || !away || !scoreM) continue;
+        for (var ri = 0; ri < fileRows.length; ri++) {
+          var fr = fileRows[ri];
+          var home = fr.home, away = fr.away;
 
           var key = peNormTeam(home) + '|' + peNormTeam(away);
           var found = byKey[key];
@@ -12710,18 +12800,20 @@ function peImportResultsCsv(event) {
           }
           if (!found || !found.length) { notFound++; continue; }
 
-          var homeGoals = parseInt(scoreM[1], 10);
-          var awayGoals = parseInt(scoreM[2], 10);
-          var homeCorners = idx['Корнери домакин'] !== undefined ? parseInt(vals[idx['Корнери домакин']], 10) : null;
-          var awayCorners = idx['Корнери гост'] !== undefined ? parseInt(vals[idx['Корнери гост']], 10) : null;
-          if (isNaN(homeCorners)) homeCorners = null;
-          if (isNaN(awayCorners)) awayCorners = null;
+          // ✅ Ако същия отборен чифт се среща по няколко пъти във файла
+          // (различни срещи на различни дати, напр. цял сезон), сигнал
+          // без собствена kickoff дата не може да разграничи кой резултат
+          // е верният — първото съвпадение печели, следващите за СЪЩИЯ
+          // вече актуализиран сигнал се пропускат вместо тихо да
+          // презаписват с грешна дата на среща.
+          found = found.filter(function(it){ return !matchedIds[it.id]; });
+          if (!found.length) { ambiguous++; continue; }
 
           for (var fi = 0; fi < found.length; fi++) {
             try {
-              var body = { id: found[fi].id, final_score_home: homeGoals, final_score_away: awayGoals };
-              if (homeCorners != null) body.final_corners_home = homeCorners;
-              if (awayCorners != null) body.final_corners_away = awayCorners;
+              var body = { id: found[fi].id, final_score_home: fr.homeGoals, final_score_away: fr.awayGoals };
+              if (fr.homeCorners != null) body.final_corners_home = fr.homeCorners;
+              if (fr.awayCorners != null) body.final_corners_away = fr.awayCorners;
               var r = await fetch('/api/pinnacle-edge', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(function(x){return x.json();});
               if (r && r.ok) { matched++; matchedIds[found[fi].id] = true; } else updateErrors++;
             } catch(err) { updateErrors++; }
@@ -12733,8 +12825,10 @@ function peImportResultsCsv(event) {
         var unmatchedSignals = pending.filter(function(it){ return !matchedIds[it.id]; });
 
         if (textEl) textEl.textContent = '📁 Качи AiScore CSV с резултати';
-        var summary = '✅ Попълнени ' + matched + ' сигнала от общо ' + pending.length + ' чакащи' +
+        var summary = '📄 Формат: ' + parsedFile.format + '<br>' +
+          '✅ Попълнени ' + matched + ' сигнала от общо ' + pending.length + ' чакащи' +
           (notFound ? ' · ' + notFound + ' мача от файла без чакащ сигнал' : '') +
+          (ambiguous ? ' · <span style="color:var(--yel)">' + ambiguous + ' нееднозначни (същия чифт отбори среща се повече от веднъж — само първото съвпадение приложено)</span>' : '') +
           (updateErrors ? ' · <span style="color:#f87171">' + updateErrors + ' грешки</span>' : '');
         if (unmatchedSignals.length) {
           summary += '<div style="margin-top:.4rem;color:var(--yel)">⚠ ' + unmatchedSignals.length + ' чакащи сигнала НЕ намериха съвпадение в този файл:</div>' +
