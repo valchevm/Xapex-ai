@@ -3848,6 +3848,14 @@ input::placeholder, textarea::placeholder {
         <option value="">Всички пазари</option>
       </select>
     </div>
+    <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem">
+      <span style="font-size:.62rem;color:var(--dim)">Дата:</span>
+      <input type="date" id="peDateFrom" onchange="peLoadLog()" style="flex:1;padding:.35rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.6rem;font-family:var(--mono)">
+      <span style="font-size:.6rem;color:var(--dim)">до</span>
+      <input type="date" id="peDateTo" onchange="peLoadLog()" style="flex:1;padding:.35rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.6rem;font-family:var(--mono)">
+    </div>
+    <div style="font-size:.56rem;color:var(--dim);margin-bottom:.5rem">Датата е по kickoff (ако е разпозната от текста), иначе по дата на добавяне.</div>
+    <button class="btn btn-p btn-action" onclick="peExportCsv()" style="width:100%;margin-bottom:.6rem">⬇️ Изтегли филтрираните (CSV + анализ)</button>
     <div id="peAnalysis" style="margin-bottom:.6rem"></div>
 
     <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem">
@@ -12134,6 +12142,32 @@ function peParseMarket(txt) {
 
 // ── Парсва ЦЕЛИЯ поставен текст → масив от структурирани сигнали ──
 // Разделя на блокове по "⚙️ Setting:" (всеки старт на нов сигнал).
+// ── Best-effort парсинг на kickoff текст ("28 Jul 20:30" и подобни)
+// в ISO дата, за филтриране по период при експорт. При неуспех
+// връща null — филтрите тогава падат обратно на created_at. ──
+var PE_MONTHS = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+function peParseKickoffDate(txt) {
+  if (!txt) return null;
+  var m = txt.match(/(\d{1,2})\s+([A-Za-z]{3,})\s*(\d{1,2}):(\d{2})/);
+  if (m) {
+    var day = parseInt(m[1], 10);
+    var monKey = m[2].toLowerCase().slice(0,3);
+    var mon = PE_MONTHS[monKey];
+    if (mon != null) {
+      var now = new Date();
+      var year = now.getFullYear();
+      // Ако месецът вече е "минал" спрямо текущия с повече от ~2 месеца,
+      // сигналът вероятно е за следващата година (около Нова година).
+      if (mon < now.getMonth() - 2) year += 1;
+      var d = new Date(Date.UTC(year, mon, day, parseInt(m[3],10), parseInt(m[4],10)));
+      if (!isNaN(d.getTime())) return d.toISOString();
+    }
+  }
+  var direct = new Date(txt);
+  if (!isNaN(direct.getTime())) return direct.toISOString();
+  return null;
+}
+
 function peParseMultiple(text) {
   if (!text || !text.trim()) return [];
   var blocks = text.split(/(?=⚙️\s*Setting:)/).map(function(b){ return b.trim(); }).filter(Boolean);
@@ -12155,6 +12189,7 @@ function peParseMultiple(text) {
     if (!vsM) return; // без отбори — не можем да го запишем смислено
 
     var parsedMarket = peParseMarket(marketM ? marketM[1] : '');
+    var kickTxt = kickM ? kickM[1].trim() : '';
 
     results.push({
       setting: settingM[1].charAt(0).toUpperCase() + settingM[1].slice(1).toLowerCase(),
@@ -12169,7 +12204,8 @@ function peParseMultiple(text) {
       bet365_odds: betM ? parseFloat(betM[1]) : null,
       edge_pct: edgeM ? parseFloat(edgeM[1]) : null,
       implied_prob: implM ? parseFloat(implM[1]) : null,
-      kickoff_txt: kickM ? kickM[1].trim() : ''
+      kickoff_txt: kickTxt,
+      kickoff_date_iso: peParseKickoffDate(kickTxt)
     });
   });
 
@@ -12318,6 +12354,79 @@ function peRenderAnalysis(items, marketLabel) {
     '</div>';
 }
 
+// ── Изтегля CSV с текущо филтрираните (пазар + дата) сигнали,
+// с анализа в началото на файла. ──
+function peCsvEscape(v) {
+  if (v == null) return '';
+  var s = String(v);
+  if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function peExportCsv() {
+  var items = window.PE_LAST_FILTERED || [];
+  if (!items.length) {
+    if (typeof showToast === 'function') showToast('⚠ Няма сигнали, отговарящи на текущия филтър', 'warn');
+    return;
+  }
+
+  var sel = document.getElementById('peAnalysisMarketFilter');
+  var selectedMarket = sel ? sel.value : '';
+  var dateFrom = document.getElementById('peDateFrom') ? document.getElementById('peDateFrom').value : '';
+  var dateTo = document.getElementById('peDateTo') ? document.getElementById('peDateTo').value : '';
+
+  // ── Анализ статистики (същата логика като peRenderAnalysis) ──
+  var settled = items.filter(function(it){ return it.outcome === 'WIN' || it.outcome === 'LOSE' || it.outcome === 'PUSH'; });
+  var wins = items.filter(function(it){ return it.outcome === 'WIN'; }).length;
+  var loses = items.filter(function(it){ return it.outcome === 'LOSE'; }).length;
+  var pushes = items.filter(function(it){ return it.outcome === 'PUSH'; }).length;
+  var pendingCorners = items.filter(function(it){ return it.setting === 'Corners' && it.outcome === 'PENDING'; }).length;
+  var pendingGoals = items.filter(function(it){ return it.setting === 'Goals' && it.outcome === 'PENDING'; }).length;
+  var decisiveN = wins + loses;
+  var winRate = decisiveN ? (wins / decisiveN * 100) : 0;
+  var totalProfit = settled.reduce(function(s, it){ return s + (it.profit || 0); }, 0);
+  var yieldPct = settled.length ? (totalProfit / settled.length * 100) : 0;
+  var avgEdge = items.length ? (items.reduce(function(s,it){ return s + (it.edge_pct||0); }, 0) / items.length) : 0;
+  var settledOdds = settled.map(function(it){ return it.bet365_odds; }).filter(function(o){ return o != null; });
+  var avgOdds = settledOdds.length ? (settledOdds.reduce(function(a,b){return a+b;},0) / settledOdds.length) : 0;
+  var breakEven = avgOdds > 1 ? (100 / avgOdds) : 0;
+
+  var lines = [];
+  lines.push('# Pinnacle Edge — Анализ на филтрирани сигнали');
+  lines.push('# Пазар: ' + (selectedMarket || 'всички'));
+  lines.push('# Период: ' + (dateFrom || '—') + ' до ' + (dateTo || '—'));
+  lines.push('# Общо сигнали: ' + items.length);
+  lines.push('# Разрешени: ' + settled.length + ' (WIN: ' + wins + ', LOSE: ' + loses + ', PUSH: ' + pushes + ')');
+  lines.push('# Чакащи (голове): ' + pendingGoals + ', Чакащи (корнери): ' + pendingCorners);
+  lines.push('# Успеваемост: ' + winRate.toFixed(1) + '%');
+  lines.push('# Профит: ' + (totalProfit>=0?'+':'') + totalProfit.toFixed(2) + 'u');
+  lines.push('# Yield/ROI: ' + (yieldPct>=0?'+':'') + yieldPct.toFixed(1) + '%');
+  lines.push('# Среден Edge: ' + avgEdge.toFixed(1) + '%');
+  lines.push('# Среден коефициент (разрешени): ' + avgOdds.toFixed(2));
+  lines.push('# Break-even win rate: ' + breakEven.toFixed(1) + '%');
+  lines.push('#');
+
+  var headers = ['home','away','league','setting','market_label','fair_price','bet365_odds','edge_pct','implied_prob','kickoff_txt','final_score_home','final_score_away','outcome','profit'];
+  lines.push(headers.join(','));
+  items.forEach(function(it){
+    lines.push(headers.map(function(h){ return peCsvEscape(it[h]); }).join(','));
+  });
+
+  var csv = lines.join('\n');
+  var blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  var marketSlug = (selectedMarket || 'all').replace(/[^a-zA-Z0-9]+/g, '_');
+  a.href = url;
+  a.download = 'pinnacle_edge_' + marketSlug + '_' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function peLoadLog() {
   var wrap = document.getElementById('peTableWrap');
   if (!wrap) return;
@@ -12348,11 +12457,33 @@ function peLoadLog() {
       if (uniqueMarkets.indexOf(prevVal) !== -1) sel.value = prevVal; // запазваме избора между refresh-и
     }
 
-    // ── Анализ панела филтрираме по избрания пазар (таблицата долу
-    // остава показваща ВСИЧКИ сигнали, само анализа се стеснява). ──
+    // ── Анализ панела филтрираме по избрания пазар И дата (таблицата
+    // долу остава показваща ВСИЧКИ сигнали, само анализа/експорта се
+    // стесняват). Дата: по kickoff_date_iso ако е разпознат, иначе
+    // по created_at. ──
     var selectedMarket = sel ? sel.value : '';
-    var analysisItems = selectedMarket ? items.filter(function(it){ return (it.market_label||'—') === selectedMarket; }) : items;
+    var dateFromEl = document.getElementById('peDateFrom');
+    var dateToEl = document.getElementById('peDateTo');
+    var dateFrom = dateFromEl && dateFromEl.value ? dateFromEl.value : null;
+    var dateTo = dateToEl && dateToEl.value ? dateToEl.value : null;
+
+    function peItemDate(it) {
+      var raw = it.kickoff_date_iso || it.created_at;
+      return raw ? raw.slice(0,10) : null;
+    }
+
+    var analysisItems = items.filter(function(it){
+      if (selectedMarket && (it.market_label||'—') !== selectedMarket) return false;
+      if (dateFrom || dateTo) {
+        var d = peItemDate(it);
+        if (!d) return false; // няма дата за сравнение — изключваме при активен филтър
+        if (dateFrom && d < dateFrom) return false;
+        if (dateTo && d > dateTo) return false;
+      }
+      return true;
+    });
     peRenderAnalysis(analysisItems, selectedMarket);
+    window.PE_LAST_FILTERED = analysisItems; // за експорт
 
     if (!items.length) { wrap.innerHTML = '<div style="text-align:center;padding:.5rem 0">Няма запазени сигнали още.</div>'; return; }
 

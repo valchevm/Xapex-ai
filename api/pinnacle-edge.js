@@ -52,6 +52,7 @@ export default async function handler(req, res) {
           edge_pct: row.edge_pct != null ? row.edge_pct : null,
           implied_prob: row.implied_prob != null ? row.implied_prob : null,
           kickoff_txt: row.kickoff_txt || null,
+          kickoff_date_iso: row.kickoff_date_iso || null,
           final_score_home: null,
           final_score_away: null,
           created_at: new Date().toISOString(),
