@@ -12469,10 +12469,38 @@ function peParseSemicolonLine(line) {
   return result;
 }
 
-// ── Нормализация на име на отбор за съпоставяне (case-insensitive,
-// без излишни интервали). ──
+// ── Нормализация на име на отбор за съпоставяне — по-агресивна:
+// маха диакритика, чести клубни суфикси/представки (FC/CF/SC/AC/U20
+// и т.н.), пунктуация — за да намалим пропуснатите съвпадения заради
+// различия в изписването между различните източници (OddAlerts vs
+// AiScore). ──
 function peNormTeam(s) {
-  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  s = (s || '').trim().toLowerCase();
+  // Диакритика → базови латински букви (Žilina -> zilina)
+  s = s.normalize ? s.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : s;
+  // Пунктуация → интервал
+  s = s.replace(/[.'’\-]/g, ' ');
+  // Чести представки/суфикси, които варират между източниците
+  s = s.replace(/\b(fc|cf|sc|ac|afc|cfc|the)\b/g, ' ');
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+
+// ── Fuzzy fallback — ако точното нормализирано съвпадение се провали
+// (напр. "AFC Ajax" срещу "Ajax Amsterdam" — различен формат между
+// източниците), проверяваме дали едното име СЪДЪРЖА другото, или
+// споделят достатъчно от думите си. ──
+function peFuzzyTeamMatch(a, b) {
+  var na = peNormTeam(a), nb = peNormTeam(b);
+  if (na === nb) return true;
+  if (!na || !nb) return false;
+  if (na.indexOf(nb) !== -1 || nb.indexOf(na) !== -1) return true;
+  var wa = na.split(' ').filter(function(w){ return w.length > 2; });
+  var wb = nb.split(' ').filter(function(w){ return w.length > 2; });
+  if (!wa.length || !wb.length) return false;
+  var shared = wa.filter(function(w){ return wb.indexOf(w) !== -1; });
+  var minLen = Math.min(wa.length, wb.length);
+  return shared.length >= minLen;
 }
 
 function peImportResultsCsv(event) {
@@ -12514,6 +12542,7 @@ function peImportResultsCsv(event) {
         });
 
         var matched = 0, notFound = 0, updateErrors = 0;
+        var matchedIds = {};
         for (var li = 1; li < lines.length; li++) {
           var vals = peParseSemicolonLine(lines[li]);
           var home = (vals[idx['Отбор домакин']] || '').trim();
@@ -12524,6 +12553,13 @@ function peImportResultsCsv(event) {
 
           var key = peNormTeam(home) + '|' + peNormTeam(away);
           var found = byKey[key];
+          if (!found || !found.length) {
+            // ── Fuzzy fallback — точното съвпадение се провали, търсим
+            // сред ВСИЧКИ чакащи сигнали дали някой достатъчно прилича. ──
+            found = pending.filter(function(it){
+              return peFuzzyTeamMatch(it.home, home) && peFuzzyTeamMatch(it.away, away);
+            });
+          }
           if (!found || !found.length) { notFound++; continue; }
 
           var homeGoals = parseInt(scoreM[1], 10);
@@ -12539,15 +12575,26 @@ function peImportResultsCsv(event) {
               if (homeCorners != null) body.final_corners_home = homeCorners;
               if (awayCorners != null) body.final_corners_away = awayCorners;
               var r = await fetch('/api/pinnacle-edge', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(function(x){return x.json();});
-              if (r && r.ok) matched++; else updateErrors++;
+              if (r && r.ok) { matched++; matchedIds[found[fi].id] = true; } else updateErrors++;
             } catch(err) { updateErrors++; }
           }
         }
 
+        // ── Диагностика: кои чакащи сигнали НЕ намериха съвпадение в
+        // файла — за да можеш директно да сравниш изписването. ──
+        var unmatchedSignals = pending.filter(function(it){ return !matchedIds[it.id]; });
+
         if (textEl) textEl.textContent = '📁 Качи AiScore CSV с резултати';
-        if (resEl) resEl.innerHTML = '✅ Попълнени ' + matched + ' сигнала' +
+        var summary = '✅ Попълнени ' + matched + ' сигнала от общо ' + pending.length + ' чакащи' +
           (notFound ? ' · ' + notFound + ' мача от файла без чакащ сигнал' : '') +
           (updateErrors ? ' · <span style="color:#f87171">' + updateErrors + ' грешки</span>' : '');
+        if (unmatchedSignals.length) {
+          summary += '<div style="margin-top:.4rem;color:var(--yel)">⚠ ' + unmatchedSignals.length + ' чакащи сигнала НЕ намериха съвпадение в този файл:</div>' +
+            '<div style="max-height:150px;overflow-y:auto;margin-top:.2rem">' +
+            unmatchedSignals.map(function(it){ return '<div>• ' + escHtml(it.home) + ' vs ' + escHtml(it.away) + '</div>'; }).join('') +
+            '</div>';
+        }
+        if (resEl) resEl.innerHTML = summary;
         peLoadLog();
       } catch(err) {
         if (textEl) textEl.textContent = '📁 Качи AiScore CSV с резултати';
