@@ -12163,7 +12163,16 @@ function peParseMarket(txt) {
 var PE_MONTHS = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
 function peParseKickoffDate(txt) {
   if (!txt) return null;
-  var m = txt.match(/(\d{1,2})\s+([A-Za-z]{3,})\s*(\d{1,2}):(\d{2})/);
+  // ✅ Поддръжка и на "Sun 2nd Aug at 11:00 (BST)" стил — махаме ден от
+  // седмицата, ordinal суфикси (2nd/3rd/21st), "at" и часовата зона,
+  // за да паднем обратно на същия "DD Mon HH:MM" regex.
+  var cleaned = txt
+    .replace(/^[A-Za-z]{3,9}\s+/, '')           // "Sun " в началото
+    .replace(/(\d+)(st|nd|rd|th)\b/i, '$1')      // "2nd" -> "2"
+    .replace(/\bat\b/i, '')                       // "at"
+    .replace(/\([A-Za-z]+\)\s*$/, '')             // "(BST)" в края
+    .trim();
+  var m = cleaned.match(/(\d{1,2})\s+([A-Za-z]{3,})\s*(\d{1,2}):(\d{2})/);
   if (m) {
     var day = parseInt(m[1], 10);
     var monKey = m[2].toLowerCase().slice(0,3);
@@ -12185,6 +12194,14 @@ function peParseKickoffDate(txt) {
 
 function peParseMultiple(text) {
   if (!text || !text.trim()) return [];
+  // ✅ Автоматично разпознаване на формат — emoji (⚙️/🆚/🏆/...) или
+  // обикновен текст без emoji (Setting:/Fair Price:/... на отделни
+  // редове, пазарът е РЕДЪТ ПРЕДИ "Fair Price:", независимо от Setting).
+  if (text.indexOf('⚙️') !== -1) return peParseEmojiFormat(text);
+  return peParsePlainFormat(text);
+}
+
+function peParseEmojiFormat(text) {
   var blocks = text.split(/(?=⚙️\s*Setting:)/).map(function(b){ return b.trim(); }).filter(Boolean);
   var results = [];
 
@@ -12211,6 +12228,74 @@ function peParseMultiple(text) {
       home: vsM[1].trim(),
       away: vsM[2].trim(),
       league: leagueM ? leagueM[1].trim() : '',
+      market: parsedMarket.market,
+      market_side: parsedMarket.side,
+      market_line: parsedMarket.line,
+      market_label: parsedMarket.label,
+      fair_price: fairM ? parseFloat(fairM[1]) : null,
+      bet365_odds: betM ? parseFloat(betM[1]) : null,
+      edge_pct: edgeM ? parseFloat(edgeM[1]) : null,
+      implied_prob: implM ? parseFloat(implM[1]) : null,
+      kickoff_txt: kickTxt,
+      kickoff_date_iso: peParseKickoffDate(kickTxt)
+    });
+  });
+
+  return results;
+}
+
+// ── Обикновен текст (без emoji) — всеки ред е отделно поле. Пазарът
+// е РЕДЪТ ПРЕДИ "Fair Price:" (по изрично уточнение) — не съвпада
+// задължително със "Setting", защото Setting е само Goals/Corners
+// категория, докато пазарният ред е конкретния маркет (ML - Home,
+// Totals - Over (X) и т.н.). ──
+function peParsePlainFormat(text) {
+  var blocks = text.split(/(?=^\s*Setting:\s*(?:Goals|Corners))/im).map(function(b){ return b.trim(); }).filter(Boolean);
+  var results = [];
+  var SKIP_LINES = /^(football|soccer|basketball|tennis)$/i;
+
+  blocks.forEach(function(block){
+    var lines = block.split(/\r?\n/).map(function(l){ return l.trim(); }).filter(Boolean);
+    var settingIdx = lines.findIndex(function(l){ return /^Setting:\s*(Goals|Corners)/i.test(l); });
+    if (settingIdx === -1) return;
+    var settingM = lines[settingIdx].match(/^Setting:\s*(Goals|Corners)/i);
+
+    var vsIdx = lines.findIndex(function(l){ return /\bvs\b/i.test(l); });
+    if (vsIdx === -1) return; // без отбори — не можем да го запишем смислено
+    var vsM = lines[vsIdx].match(/(.+?)\s+vs\s+(.+)/i);
+    if (!vsM) return;
+
+    var fairIdx = lines.findIndex(function(l){ return /^Fair Price:/i.test(l); });
+    var betIdx  = lines.findIndex(function(l){ return /^Bet365 Odds:/i.test(l); });
+    var edgeIdx = lines.findIndex(function(l){ return /^Edge:/i.test(l); });
+    var implIdx = lines.findIndex(function(l){ return /^Implied Prob\.?/i.test(l); });
+    var linkIdx = lines.findIndex(function(l){ return /^\[Open on/i.test(l); });
+
+    // ── Пазарният ред е точно ПРЕДИ "Fair Price:" ──
+    var marketTxt = (fairIdx > 0) ? lines[fairIdx - 1] : '';
+    var parsedMarket = peParseMarket(marketTxt);
+
+    // ── Лигата — редовете между "vs" и пазарния ред, без sport-type думи ──
+    var leagueLines = [];
+    for (var li = vsIdx + 1; li < fairIdx - 1; li++) {
+      if (!SKIP_LINES.test(lines[li])) leagueLines.push(lines[li]);
+    }
+    var league = leagueLines.join(', ');
+
+    // ── Kickoff — редът след Implied Prob., преди линка (ако има) ──
+    var kickIdx = implIdx !== -1 ? implIdx + 1 : -1;
+    var kickTxt = (kickIdx !== -1 && kickIdx < lines.length && (linkIdx === -1 || kickIdx < linkIdx)) ? lines[kickIdx] : '';
+
+    var fairM = fairIdx !== -1 ? lines[fairIdx].match(/Fair Price:\s*([\d.]+)/i) : null;
+    var betM  = betIdx  !== -1 ? lines[betIdx].match(/Bet365 Odds:\s*([\d.]+)/i) : null;
+    var edgeM = edgeIdx !== -1 ? lines[edgeIdx].match(/Edge:\s*([\d.]+)/i) : null;
+    var implM = implIdx !== -1 ? lines[implIdx].match(/Implied Prob\.?\s*([\d.]+)/i) : null;
+
+    results.push({
+      setting: settingM[1].charAt(0).toUpperCase() + settingM[1].slice(1).toLowerCase(),
+      home: vsM[1].trim(),
+      away: vsM[2].trim(),
+      league: league,
       market: parsedMarket.market,
       market_side: parsedMarket.side,
       market_line: parsedMarket.line,
