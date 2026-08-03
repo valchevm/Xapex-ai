@@ -1935,6 +1935,10 @@ input::placeholder, textarea::placeholder {
         <div class="dash-tile-ic">📒</div><div class="dash-tile-t">Value Тракер</div>
         <div class="dash-tile-d">Движение на коефициенти</div>
       </div>
+      <div class="dash-tile" onclick="navTo('pinnacleEdgeCard','⚡ Pinnacle Edge')">
+        <div class="dash-tile-ic">⚡</div><div class="dash-tile-t">Pinnacle Edge</div>
+        <div class="dash-tile-d">OddAlerts edge сигнали</div>
+      </div>
     </div>
   </div>
 
@@ -3807,6 +3811,44 @@ input::placeholder, textarea::placeholder {
       </div>
       <div id="vbLogList" style="font-size:.62rem;color:var(--dim)">Зареждане...</div>
     </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     ⚡ PINNACLE EDGE — трекър и backtest за edge сигнали от Sports
+     Edge by OddAlerts.com (fair price vs Bet365 odds). Следва
+     ТОЧНО същите конвенции като Value Bet Tracker: .card/.chdr
+     collapse pattern, Oracle през /api/* proxy (GET-then-PUT).
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="card" id="pinnacleEdgeCard">
+  <div class="chdr" style="cursor:pointer" onclick="peToggle()">
+    ⚡ Pinnacle Edge
+    <span id="peArrow" style="margin-left:auto;color:var(--dim)">▼</span>
+  </div>
+  <div id="pePanel" style="display:none">
+    <div style="font-size:.62rem;color:var(--dim);margin-bottom:.7rem;line-height:1.5">
+      Постави 1 или няколко edge сигнала наведнъж от Sports Edge by OddAlerts.com (fair price срещу Bet365 коефициент). Всеки сигнал започва с "⚙️ Setting:". Пази се в Oracle.
+    </div>
+
+    <textarea id="pePasteInput" rows="10" placeholder="Постави тук един или няколко сигнала (всеки започва с ⚙️ Setting:...)"
+      style="width:100%;padding:.6rem;background:#0a1429;border:1px solid var(--bord);
+      border-radius:7px;color:var(--txt);font-family:var(--mono);font-size:12px;
+      resize:vertical;line-height:1.4;box-sizing:border-box;margin-bottom:.5rem"></textarea>
+
+    <button class="btn btn-p btn-action" onclick="peParseAndPreview()" style="width:100%;margin-bottom:.6rem">
+      ➕ Добави сигнали
+    </button>
+
+    <div id="pePreview"></div>
+
+    <!-- ── Анализ панел ── -->
+    <div id="peAnalysis" style="margin-top:.9rem;margin-bottom:.6rem"></div>
+
+    <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem">
+      <span style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Сигнали</span>
+      <button class="btn btn-sec" style="margin-left:auto;font-size:.58rem;padding:3px 8px" onclick="peLoadLog()">🔄 Обнови</button>
+    </div>
+    <div id="peTableWrap" style="font-size:.6rem;color:var(--dim);overflow-x:auto">Зареждане...</div>
   </div>
 </div>
 
@@ -12052,6 +12094,275 @@ function toggleVbTracker() {
   p.style.display = shown ? 'none' : 'block';
   a.textContent   = shown ? '▶' : '▼';
   if (!shown) vbLoadLog();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ⚡ PINNACLE EDGE — edge сигнали от Sports Edge by OddAlerts.com
+// (fair price срещу Bet365 odds). Следва ТОЧНО същите конвенции
+// като Value Bet Tracker (collapse pattern, Oracle през /api/*).
+// ═══════════════════════════════════════════════════════════════
+var PE_PENDING = [];
+
+function peToggle() {
+  var p = document.getElementById('pePanel');
+  var a = document.getElementById('peArrow');
+  if (!p || !a) return;
+  var shown = p.style.display !== 'none';
+  p.style.display = shown ? 'none' : 'block';
+  a.textContent   = shown ? '▶' : '▼';
+  if (!shown) peLoadLog();
+}
+
+// ── Парсва пазар текста ("ML - Home", "Totals - Over (2.5)" и т.н.) ──
+function peParseMarket(txt) {
+  txt = (txt || '').trim();
+  var m;
+  if (/ML\s*-\s*Home/i.test(txt)) return { market: 'ML', side: 'Home', line: null, label: 'ML - Home' };
+  if (/ML\s*-\s*Away/i.test(txt)) return { market: 'ML', side: 'Away', line: null, label: 'ML - Away' };
+  m = txt.match(/Totals\s*-\s*Over\s*\(?([\d.]+)\)?/i);
+  if (m) return { market: 'Totals', side: 'Over', line: parseFloat(m[1]), label: 'Totals - Over (' + m[1] + ')' };
+  m = txt.match(/Totals\s*-\s*Under\s*\(?([\d.]+)\)?/i);
+  if (m) return { market: 'Totals', side: 'Under', line: parseFloat(m[1]), label: 'Totals - Under (' + m[1] + ')' };
+  return { market: null, side: null, line: null, label: txt || '—' };
+}
+
+// ── Парсва ЦЕЛИЯ поставен текст → масив от структурирани сигнали ──
+// Разделя на блокове по "⚙️ Setting:" (всеки старт на нов сигнал).
+function peParseMultiple(text) {
+  if (!text || !text.trim()) return [];
+  var blocks = text.split(/(?=⚙️\s*Setting:)/).map(function(b){ return b.trim(); }).filter(Boolean);
+  var results = [];
+
+  blocks.forEach(function(block){
+    var settingM = block.match(/⚙️\s*Setting:\s*(Goals|Corners)/i);
+    if (!settingM) return; // не е валиден сигнал блок
+
+    var vsM     = block.match(/🆚\s*(.+?)\s+vs\s+(.+?)(?:\n|$)/i);
+    var leagueM = block.match(/🏆\s*(.+?)(?:\n|$)/);
+    var marketM = block.match(/📊\s*(.+?)(?:\n|$)/);
+    var fairM   = block.match(/📉\s*Fair Price:\s*([\d.]+)/i);
+    var betM    = block.match(/📈\s*Bet365 Odds:\s*([\d.]+)/i);
+    var edgeM   = block.match(/✨\s*Edge:\s*([\d.]+)/i);
+    var implM   = block.match(/🌡️\s*Implied Prob\.?\s*([\d.]+)/i);
+    var kickM   = block.match(/📆\s*(.+?)(?:\n|$)/);
+
+    if (!vsM) return; // без отбори — не можем да го запишем смислено
+
+    var parsedMarket = peParseMarket(marketM ? marketM[1] : '');
+
+    results.push({
+      setting: settingM[1].charAt(0).toUpperCase() + settingM[1].slice(1).toLowerCase(),
+      home: vsM[1].trim(),
+      away: vsM[2].trim(),
+      league: leagueM ? leagueM[1].trim() : '',
+      market: parsedMarket.market,
+      market_side: parsedMarket.side,
+      market_line: parsedMarket.line,
+      market_label: parsedMarket.label,
+      fair_price: fairM ? parseFloat(fairM[1]) : null,
+      bet365_odds: betM ? parseFloat(betM[1]) : null,
+      edge_pct: edgeM ? parseFloat(edgeM[1]) : null,
+      implied_prob: implM ? parseFloat(implM[1]) : null,
+      kickoff_txt: kickM ? kickM[1].trim() : ''
+    });
+  });
+
+  return results;
+}
+
+// ── Изчислява изход (WIN/LOSE/PUSH/PENDING) + профит от резултат ──
+function peComputeOutcome(sig, homeScore, awayScore) {
+  if (sig.setting === 'Corners') {
+    return { outcome: 'PENDING', profit: null }; // корнери — засега няма данни
+  }
+  if (homeScore == null || awayScore == null || homeScore === '' || awayScore === '') {
+    return { outcome: 'PENDING', profit: null };
+  }
+  var h = parseFloat(homeScore), a = parseFloat(awayScore);
+  if (isNaN(h) || isNaN(a)) return { outcome: 'PENDING', profit: null };
+
+  var outcome;
+  if (sig.market === 'ML' && sig.market_side === 'Home') {
+    outcome = h > a ? 'WIN' : 'LOSE';
+  } else if (sig.market === 'ML' && sig.market_side === 'Away') {
+    outcome = a > h ? 'WIN' : 'LOSE';
+  } else if (sig.market === 'Totals' && sig.market_side === 'Over') {
+    var total = h + a;
+    outcome = total > sig.market_line ? 'WIN' : (total === sig.market_line ? 'PUSH' : 'LOSE');
+  } else if (sig.market === 'Totals' && sig.market_side === 'Under') {
+    var total2 = h + a;
+    outcome = total2 < sig.market_line ? 'WIN' : (total2 === sig.market_line ? 'PUSH' : 'LOSE');
+  } else {
+    return { outcome: 'PENDING', profit: null };
+  }
+
+  var stake = 1;
+  var profit = outcome === 'WIN' ? stake * (sig.bet365_odds - 1) : outcome === 'LOSE' ? -stake : 0;
+  return { outcome: outcome, profit: profit };
+}
+
+function peParseAndPreview() {
+  var text = document.getElementById('pePasteInput').value;
+  var box = document.getElementById('pePreview');
+  if (!text.trim()) return;
+
+  var parsed = peParseMultiple(text);
+  if (!parsed.length) {
+    box.innerHTML = '<div style="color:var(--red);font-size:.68rem;padding:.5rem 0">⚠ Не успях да разпозная нито един сигнал — провери формата (трябва да започва с ⚙️ Setting:).</div>';
+    return;
+  }
+  PE_PENDING = parsed;
+
+  var html = parsed.map(function(p, i){
+    return '<div style="background:#0a1429;border:1px solid var(--bord);border-radius:8px;padding:.6rem;margin-bottom:.5rem">' +
+      '<div style="font-size:.72rem;font-weight:700;color:var(--acc);margin-bottom:.3rem">' + p.home + ' <span style="color:var(--dim)">vs</span> ' + p.away + '</div>' +
+      '<div style="font-size:.6rem;color:var(--dim);margin-bottom:.3rem">🏆 ' + (p.league||'—') + ' · ⚙️ ' + p.setting + ' · 📆 ' + (p.kickoff_txt||'—') + '</div>' +
+      '<div style="font-size:.65rem;margin-bottom:.3rem">📊 ' + p.market_label + ' · Fair <b>' + (p.fair_price!=null?p.fair_price:'—') + '</b> · Bet365 <b>' + (p.bet365_odds!=null?p.bet365_odds:'—') + '</b></div>' +
+      '<div style="font-size:.65rem">✨ Edge: <b style="color:var(--grn)">' + (p.edge_pct!=null?p.edge_pct+'%':'—') + '</b> · 🌡️ Implied: <b>' + (p.implied_prob!=null?p.implied_prob+'%':'—') + '</b></div>' +
+    '</div>';
+  }).join('');
+
+  html += '<button class="btn btn-p btn-action" style="width:100%" onclick="peSaveAllPending()">💾 Запази всички (' + parsed.length + ')</button>';
+  box.innerHTML = html;
+}
+
+function peSaveAllPending() {
+  if (!PE_PENDING.length) return;
+  fetch('/api/pinnacle-edge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rows: PE_PENDING })
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if (data && data.ok) {
+      if (typeof showToast === 'function') showToast('✅ Запазени ' + (data.count||PE_PENDING.length) + ' сигнала', 'success');
+      document.getElementById('pePasteInput').value = '';
+      document.getElementById('pePreview').innerHTML = '';
+      PE_PENDING = [];
+      peLoadLog();
+    } else {
+      var detail = (data && Array.isArray(data.errors) && data.errors.length) ? data.errors.join(' · ') : (data && data.error) || 'непозната грешка';
+      if (typeof showToast === 'function') showToast('❌ Грешка: ' + detail, 'error');
+    }
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+  });
+}
+
+function peDeleteRow(id) {
+  if (!confirm('Изтрий този сигнал?')) return;
+  fetch('/api/pinnacle-edge', {
+    method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id })
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if (data && data.ok) { peLoadLog(); }
+    else if (typeof showToast === 'function') showToast('❌ Грешка при изтриване', 'error');
+  }).catch(function(e){ console.warn('[peDeleteRow]', e.message); });
+}
+
+function peSaveScore(id, homeVal, awayVal) {
+  var h = homeVal === '' ? null : parseFloat(homeVal);
+  var a = awayVal === '' ? null : parseFloat(awayVal);
+  fetch('/api/pinnacle-edge', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id: id, final_score_home: h, final_score_away: a })
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if (data && data.ok) peLoadLog();
+    else if (typeof showToast === 'function') showToast('❌ Грешка при запис на резултат', 'error');
+  }).catch(function(e){ console.warn('[peSaveScore]', e.message); });
+}
+
+function peRenderAnalysis(items) {
+  var box = document.getElementById('peAnalysis');
+  if (!box) return;
+  var total = items.length;
+  var settled = items.filter(function(it){ return it.outcome === 'WIN' || it.outcome === 'LOSE' || it.outcome === 'PUSH'; });
+  var wins = items.filter(function(it){ return it.outcome === 'WIN'; }).length;
+  var loses = items.filter(function(it){ return it.outcome === 'LOSE'; }).length;
+  var pushes = items.filter(function(it){ return it.outcome === 'PUSH'; }).length;
+  var pendingCorners = items.filter(function(it){ return it.setting === 'Corners' && it.outcome === 'PENDING'; }).length;
+  var pendingGoals = items.filter(function(it){ return it.setting === 'Goals' && it.outcome === 'PENDING'; }).length;
+
+  var decisiveN = wins + loses;
+  var winRate = decisiveN ? (wins / decisiveN * 100) : 0;
+  var totalProfit = settled.reduce(function(s, it){ return s + (it.profit || 0); }, 0);
+  var yieldPct = settled.length ? (totalProfit / settled.length * 100) : 0;
+  var avgEdge = total ? (items.reduce(function(s,it){ return s + (it.edge_pct||0); }, 0) / total) : 0;
+  var settledOdds = settled.map(function(it){ return it.bet365_odds; }).filter(function(o){ return o != null; });
+  var avgOdds = settledOdds.length ? (settledOdds.reduce(function(a,b){return a+b;},0) / settledOdds.length) : 0;
+  var breakEven = avgOdds > 1 ? (100 / avgOdds) : 0;
+
+  box.innerHTML =
+    '<div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.25);border-radius:8px;padding:.6rem">' +
+      '<div style="font-size:.62rem;color:var(--acc);font-weight:600;margin-bottom:.4rem">📊 Анализ</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem;font-size:.6rem">' +
+        '<div>Общо сигнали: <b>' + total + '</b></div>' +
+        '<div>Разрешени: <b>' + settled.length + '</b></div>' +
+        '<div style="color:var(--grn)">WIN: <b>' + wins + '</b></div>' +
+        '<div style="color:var(--red)">LOSE: <b>' + loses + '</b></div>' +
+        '<div>PUSH: <b>' + pushes + '</b></div>' +
+        '<div>Чакащи (голове): <b>' + pendingGoals + '</b></div>' +
+        '<div>Чакащи (корнери): <b>' + pendingCorners + '</b></div>' +
+        '<div>Успеваемост: <b style="color:' + (winRate>=50?'var(--grn)':'var(--red)') + '">' + winRate.toFixed(1) + '%</b></div>' +
+        '<div>Профит: <b style="color:' + (totalProfit>=0?'var(--grn)':'var(--red)') + '">' + (totalProfit>=0?'+':'') + totalProfit.toFixed(2) + 'u</b></div>' +
+        '<div>Yield/ROI: <b style="color:' + (yieldPct>=0?'var(--grn)':'var(--red)') + '">' + (yieldPct>=0?'+':'') + yieldPct.toFixed(1) + '%</b></div>' +
+        '<div>Среден Edge: <b>' + avgEdge.toFixed(1) + '%</b></div>' +
+        '<div>Среден коеф.: <b>' + avgOdds.toFixed(2) + '</b></div>' +
+        '<div style="grid-column:1/-1">Break-even win rate: <b>' + breakEven.toFixed(1) + '%</b></div>' +
+      '</div>' +
+    '</div>';
+}
+
+function peLoadLog() {
+  var wrap = document.getElementById('peTableWrap');
+  if (!wrap) return;
+  wrap.innerHTML = 'Зареждане...';
+  fetch('/api/pinnacle-edge').then(function(r){ return r.json(); }).then(function(data){
+    var items = (data && data.items) || [];
+    items.sort(function(a,b){ return new Date(b.created_at||0) - new Date(a.created_at||0); });
+
+    // Изчисляваме изход/профит на клиента (динамично, спрямо текущите резултати)
+    items.forEach(function(it){
+      var oc = peComputeOutcome(it, it.final_score_home, it.final_score_away);
+      it.outcome = oc.outcome;
+      it.profit = oc.profit;
+    });
+
+    peRenderAnalysis(items);
+
+    if (!items.length) { wrap.innerHTML = '<div style="text-align:center;padding:.5rem 0">Няма запазени сигнали още.</div>'; return; }
+
+    var outcomeColor = { WIN:'var(--grn)', LOSE:'var(--red)', PUSH:'var(--dim)', PENDING:'var(--yel)' };
+
+    var rows = items.map(function(it){
+      return '<tr style="border-bottom:1px solid var(--bord)">' +
+        '<td style="padding:.35rem;white-space:nowrap">' + escHtml(it.home) + ' <span style="color:var(--dim)">vs</span> ' + escHtml(it.away) + '</td>' +
+        '<td style="padding:.35rem">' + escHtml(it.league||'—') + '</td>' +
+        '<td style="padding:.35rem">' + it.setting + '</td>' +
+        '<td style="padding:.35rem;white-space:nowrap">' + escHtml(it.market_label||'—') + '</td>' +
+        '<td style="padding:.35rem">' + (it.fair_price!=null?it.fair_price:'—') + '</td>' +
+        '<td style="padding:.35rem">' + (it.bet365_odds!=null?it.bet365_odds:'—') + '</td>' +
+        '<td style="padding:.35rem;color:var(--grn)">' + (it.edge_pct!=null?it.edge_pct+'%':'—') + '</td>' +
+        '<td style="padding:.35rem">' + (it.implied_prob!=null?it.implied_prob+'%':'—') + '</td>' +
+        '<td style="padding:.35rem;white-space:nowrap">' + escHtml(it.kickoff_txt||'—') + '</td>' +
+        '<td style="padding:.35rem"><input id="peHome_' + it.id + '" type="number" step="1" value="' + (it.final_score_home!=null?it.final_score_home:'') + '" style="width:40px;font-size:.6rem;padding:2px" onchange="peSaveScore(\'' + it.id + '\', this.value, document.getElementById(\'peAway_' + it.id + '\').value)"></td>' +
+        '<td style="padding:.35rem"><input id="peAway_' + it.id + '" type="number" step="1" value="' + (it.final_score_away!=null?it.final_score_away:'') + '" style="width:40px;font-size:.6rem;padding:2px" onchange="peSaveScore(\'' + it.id + '\', document.getElementById(\'peHome_' + it.id + '\').value, this.value)"></td>' +
+        '<td style="padding:.35rem;color:' + (outcomeColor[it.outcome]||'var(--dim)') + ';font-weight:700">' + it.outcome + '</td>' +
+        '<td style="padding:.35rem;color:' + (it.profit>0?'var(--grn)':it.profit<0?'var(--red)':'var(--dim)') + '">' + (it.profit!=null ? (it.profit>=0?'+':'') + it.profit.toFixed(2) : '—') + '</td>' +
+        '<td style="padding:.35rem"><button class="btn btn-sec" style="font-size:.55rem;padding:2px 6px" onclick="peDeleteRow(\'' + it.id + '\')">🗑</button></td>' +
+      '</tr>';
+    }).join('');
+
+    wrap.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:.58rem">' +
+      '<thead><tr style="border-bottom:2px solid var(--bord);color:var(--acc);text-align:left">' +
+        '<th style="padding:.35rem">Мач</th><th style="padding:.35rem">Лига</th><th style="padding:.35rem">Setting</th>' +
+        '<th style="padding:.35rem">Пазар</th><th style="padding:.35rem">Fair</th><th style="padding:.35rem">Bet365</th>' +
+        '<th style="padding:.35rem">Edge</th><th style="padding:.35rem">Implied</th><th style="padding:.35rem">Kickoff</th>' +
+        '<th style="padding:.35rem">Дом. гол</th><th style="padding:.35rem">Гост гол</th><th style="padding:.35rem">Изход</th>' +
+        '<th style="padding:.35rem">Профит</th><th style="padding:.35rem"></th>' +
+      '</tr></thead><tbody>' + rows + '</tbody></table>';
+  }).catch(function(e){
+    wrap.innerHTML = '<div style="color:var(--red)">❌ ' + e.message + '</div>';
+  });
 }
 
 // ── Парсва ЕДНО известие (текстов къс) → структуриран обект ──
@@ -29021,7 +29332,7 @@ function dismissIOSHint() {
   // Картите които участват в навигацията
   var NAV_CARDS = ['statsPasteCard','statsCard','oddsCard','resCard','addLogCard',
     'backtestCard','xgTestCard','sharpDropCard','arbCalcCard','filterCheckCard','tgAlertCard',
-    'vbTrackerCard','pcCompareCard','oaModelCard',
+    'vbTrackerCard','pcCompareCard','oaModelCard','pinnacleEdgeCard',
     'kellyCalcCard','logSection','fxBrowserCard','settingsCard'];
 
   // Маркираме ги с nav-card клас (за CSS скриване)
