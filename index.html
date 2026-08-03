@@ -3858,6 +3858,20 @@ input::placeholder, textarea::placeholder {
     <button class="btn btn-p btn-action" onclick="peExportCsv()" style="width:100%;margin-bottom:.6rem">⬇️ Изтегли филтрираните (CSV + анализ)</button>
     <div id="peAnalysis" style="margin-bottom:.6rem"></div>
 
+    <!-- ── Автоматично попълване на резултати от AiScore CSV ── -->
+    <div style="background:#07101f;border:1px solid rgba(74,222,128,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
+      <div style="font-size:.66rem;color:#4ade80;font-weight:600;margin-bottom:.4rem">📁 Автоматично попълване на резултати</div>
+      <div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem;line-height:1.5">
+        Качи AiScore CSV с всички мачове за деня — съвпадащите по имена на отборите сигнали (голове + корнери) се попълват автоматично.
+      </div>
+      <div onclick="document.getElementById('peResultsCsvInput').click()"
+        style="border:1.5px dashed rgba(74,222,128,.3);border-radius:7px;padding:.5rem;text-align:center;cursor:pointer;background:#0a1429">
+        <div style="font-size:.6rem;font-weight:600;color:#4ade80" id="peResultsCsvText">📁 Качи AiScore CSV с резултати</div>
+        <input type="file" id="peResultsCsvInput" accept=".csv" hidden onchange="peImportResultsCsv(event)">
+      </div>
+      <div id="peResultsCsvResult" style="margin-top:.4rem;font-size:.58rem;color:var(--dim)"></div>
+    </div>
+
     <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem">
       <span style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Сигнали</span>
       <button class="btn btn-sec" style="margin-left:auto;font-size:.58rem;padding:3px 8px" onclick="peLoadLog()">🔄 Обнови</button>
@@ -12213,16 +12227,28 @@ function peParseMultiple(text) {
 }
 
 // ── Изчислява изход (WIN/LOSE/PUSH/PENDING) + профит от резултат ──
-function peComputeOutcome(sig, homeScore, awayScore) {
+function peComputeOutcome(sig) {
   if (sig.setting === 'Corners') {
-    return { outcome: 'PENDING', profit: null }; // корнери — засега няма данни
+    var ch = sig.final_corners_home, ca = sig.final_corners_away;
+    if (ch == null || ca == null || ch === '' || ca === '') {
+      return { outcome: 'PENDING', profit: null }; // все още няма корнер данни
+    }
+    ch = parseFloat(ch); ca = parseFloat(ca);
+    if (isNaN(ch) || isNaN(ca)) return { outcome: 'PENDING', profit: null };
+    return peResolveTotalsOrML(sig, ch, ca);
   }
-  if (homeScore == null || awayScore == null || homeScore === '' || awayScore === '') {
+
+  var h = sig.final_score_home, a = sig.final_score_away;
+  if (h == null || a == null || h === '' || a === '') {
     return { outcome: 'PENDING', profit: null };
   }
-  var h = parseFloat(homeScore), a = parseFloat(awayScore);
+  h = parseFloat(h); a = parseFloat(a);
   if (isNaN(h) || isNaN(a)) return { outcome: 'PENDING', profit: null };
+  return peResolveTotalsOrML(sig, h, a);
+}
 
+// ── Споделена логика ML/Totals — ползва се и за голове, и за корнери ──
+function peResolveTotalsOrML(sig, h, a) {
   var outcome;
   if (sig.market === 'ML' && sig.market_side === 'Home') {
     outcome = h > a ? 'WIN' : 'LOSE';
@@ -12427,6 +12453,113 @@ function peExportCsv() {
   URL.revokeObjectURL(url);
 }
 
+// ── Прост парсер за ;-разделени редове (AiScore формат), с базова
+// поддръжка на кавички. ──
+function peParseSemicolonLine(line) {
+  var result = [];
+  var cur = '';
+  var inQuotes = false;
+  for (var i = 0; i < line.length; i++) {
+    var ch = line[i];
+    if (ch === '"') { inQuotes = !inQuotes; continue; }
+    if (ch === ';' && !inQuotes) { result.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  result.push(cur);
+  return result;
+}
+
+// ── Нормализация на име на отбор за съпоставяне (case-insensitive,
+// без излишни интервали). ──
+function peNormTeam(s) {
+  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function peImportResultsCsv(event) {
+  var file = event.target.files && event.target.files[0];
+  if (!file) return;
+  var textEl = document.getElementById('peResultsCsvText');
+  var resEl = document.getElementById('peResultsCsvResult');
+  if (textEl) textEl.textContent = 'Обработка...';
+
+  var reader = new FileReader();
+  reader.onload = function(e){
+    (async function(){
+      try {
+        var raw = e.target.result.replace(/^\uFEFF/, '');
+        var lines = raw.split(/\r?\n/).filter(function(l){ return l.trim(); });
+        if (lines.length < 2) { if (resEl) resEl.textContent = '⚠ Празен файл'; return; }
+
+        var headers = peParseSemicolonLine(lines[0]).map(function(h){ return h.trim(); });
+        var idx = {}; headers.forEach(function(h,i){ idx[h] = i; });
+        var need = ['Отбор домакин','Отбор гост','Резултат'];
+        var missing = need.filter(function(h){ return idx[h] === undefined; });
+        if (missing.length) {
+          if (resEl) resEl.innerHTML = '❌ Липсват колони: ' + missing.join(', ');
+          if (textEl) textEl.textContent = '📁 Качи AiScore CSV с резултати';
+          return;
+        }
+
+        // ── Зареждаме текущите PENDING сигнали, за да съпоставим по имена ──
+        var data = await fetch('/api/pinnacle-edge').then(function(r){ return r.json(); });
+        var items = (data && data.items) || [];
+        items.forEach(function(it){ it.outcome = peComputeOutcome(it).outcome; });
+        var pending = items.filter(function(it){ return it.outcome === 'PENDING'; });
+
+        var byKey = {};
+        pending.forEach(function(it){
+          var key = peNormTeam(it.home) + '|' + peNormTeam(it.away);
+          if (!byKey[key]) byKey[key] = [];
+          byKey[key].push(it);
+        });
+
+        var matched = 0, notFound = 0, updateErrors = 0;
+        for (var li = 1; li < lines.length; li++) {
+          var vals = peParseSemicolonLine(lines[li]);
+          var home = (vals[idx['Отбор домакин']] || '').trim();
+          var away = (vals[idx['Отбор гост']] || '').trim();
+          var scoreRaw = (vals[idx['Резултат']] || '').trim();
+          var scoreM = scoreRaw.match(/(\d+)\s*-\s*(\d+)/);
+          if (!home || !away || !scoreM) continue;
+
+          var key = peNormTeam(home) + '|' + peNormTeam(away);
+          var found = byKey[key];
+          if (!found || !found.length) { notFound++; continue; }
+
+          var homeGoals = parseInt(scoreM[1], 10);
+          var awayGoals = parseInt(scoreM[2], 10);
+          var homeCorners = idx['Корнери домакин'] !== undefined ? parseInt(vals[idx['Корнери домакин']], 10) : null;
+          var awayCorners = idx['Корнери гост'] !== undefined ? parseInt(vals[idx['Корнери гост']], 10) : null;
+          if (isNaN(homeCorners)) homeCorners = null;
+          if (isNaN(awayCorners)) awayCorners = null;
+
+          for (var fi = 0; fi < found.length; fi++) {
+            try {
+              var body = { id: found[fi].id, final_score_home: homeGoals, final_score_away: awayGoals };
+              if (homeCorners != null) body.final_corners_home = homeCorners;
+              if (awayCorners != null) body.final_corners_away = awayCorners;
+              var r = await fetch('/api/pinnacle-edge', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(function(x){return x.json();});
+              if (r && r.ok) matched++; else updateErrors++;
+            } catch(err) { updateErrors++; }
+          }
+        }
+
+        if (textEl) textEl.textContent = '📁 Качи AiScore CSV с резултати';
+        if (resEl) resEl.innerHTML = '✅ Попълнени ' + matched + ' сигнала' +
+          (notFound ? ' · ' + notFound + ' мача от файла без чакащ сигнал' : '') +
+          (updateErrors ? ' · <span style="color:#f87171">' + updateErrors + ' грешки</span>' : '');
+        peLoadLog();
+      } catch(err) {
+        if (textEl) textEl.textContent = '📁 Качи AiScore CSV с резултати';
+        if (resEl) resEl.innerHTML = '❌ Грешка: ' + err.message;
+        console.error('[peImportResultsCsv]', err);
+      }
+      document.getElementById('peResultsCsvInput').value = '';
+    })();
+  };
+  reader.readAsText(file);
+}
+
 function peLoadLog() {
   var wrap = document.getElementById('peTableWrap');
   if (!wrap) return;
@@ -12437,7 +12570,7 @@ function peLoadLog() {
 
     // Изчисляваме изход/профит на клиента (динамично, спрямо текущите резултати)
     items.forEach(function(it){
-      var oc = peComputeOutcome(it, it.final_score_home, it.final_score_away);
+      var oc = peComputeOutcome(it);
       it.outcome = oc.outcome;
       it.profit = oc.profit;
     });

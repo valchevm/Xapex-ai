@@ -62,6 +62,8 @@ export default async function handler(req, res) {
           kickoff_date_iso: row.kickoff_date_iso || null,
           final_score_home: null,
           final_score_away: null,
+          final_corners_home: null,
+          final_corners_away: null,
           created_at: new Date().toISOString(),
         };
         const r = await oraFetch(`/${TABLE}/`, "POST", payload);
@@ -73,7 +75,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "PUT") {
-      const { id, final_score_home, final_score_away } = req.body || {};
+      const { id, final_score_home, final_score_away, final_corners_home, final_corners_away } = req.body || {};
       if (!id) { res.status(400).json({ ok: false, error: "missing_id" }); return; }
 
       // ✅ ORDS връща HTTP 405 на PATCH за тези таблици — GET + пълен
@@ -85,8 +87,10 @@ export default async function handler(req, res) {
       }
       const full = { ...existing.json };
       delete full.links; delete full._links;
-      full.final_score_home = final_score_home != null ? final_score_home : null;
-      full.final_score_away = final_score_away != null ? final_score_away : null;
+      if (final_score_home !== undefined) full.final_score_home = final_score_home;
+      if (final_score_away !== undefined) full.final_score_away = final_score_away;
+      if (final_corners_home !== undefined) full.final_corners_home = final_corners_home;
+      if (final_corners_away !== undefined) full.final_corners_away = final_corners_away;
 
       const r = await oraFetch(`/${TABLE}/${id}`, "PUT", full);
       if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
