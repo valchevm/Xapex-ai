@@ -3842,7 +3842,13 @@ input::placeholder, textarea::placeholder {
     <div id="pePreview"></div>
 
     <!-- ── Анализ панел ── -->
-    <div id="peAnalysis" style="margin-top:.9rem;margin-bottom:.6rem"></div>
+    <div style="display:flex;align-items:center;gap:.4rem;margin-top:.9rem;margin-bottom:.5rem">
+      <span style="font-size:.62rem;color:var(--dim)">Пазар:</span>
+      <select id="peAnalysisMarketFilter" onchange="peLoadLog()" style="flex:1;padding:.35rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.62rem;font-family:var(--mono)">
+        <option value="">Всички пазари</option>
+      </select>
+    </div>
+    <div id="peAnalysis" style="margin-bottom:.6rem"></div>
 
     <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem">
       <span style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Сигнали</span>
@@ -12271,7 +12277,7 @@ function peSaveScore(id, homeVal, awayVal) {
   }).catch(function(e){ console.warn('[peSaveScore]', e.message); });
 }
 
-function peRenderAnalysis(items) {
+function peRenderAnalysis(items, marketLabel) {
   var box = document.getElementById('peAnalysis');
   if (!box) return;
   var total = items.length;
@@ -12293,7 +12299,7 @@ function peRenderAnalysis(items) {
 
   box.innerHTML =
     '<div style="background:rgba(56,189,248,.06);border:1px solid rgba(56,189,248,.25);border-radius:8px;padding:.6rem">' +
-      '<div style="font-size:.62rem;color:var(--acc);font-weight:600;margin-bottom:.4rem">📊 Анализ</div>' +
+      '<div style="font-size:.62rem;color:var(--acc);font-weight:600;margin-bottom:.4rem">📊 Анализ' + (marketLabel ? ' — ' + escHtml(marketLabel) : ' — всички пазари') + '</div>' +
       '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem;font-size:.6rem">' +
         '<div>Общо сигнали: <b>' + total + '</b></div>' +
         '<div>Разрешени: <b>' + settled.length + '</b></div>' +
@@ -12327,7 +12333,26 @@ function peLoadLog() {
       it.profit = oc.profit;
     });
 
-    peRenderAnalysis(items);
+    // ── Попълваме dropdown-а с уникалните пазари, налични в данните ──
+    var sel = document.getElementById('peAnalysisMarketFilter');
+    if (sel) {
+      var uniqueMarkets = [];
+      items.forEach(function(it){
+        var lbl = it.market_label || '—';
+        if (uniqueMarkets.indexOf(lbl) === -1) uniqueMarkets.push(lbl);
+      });
+      uniqueMarkets.sort();
+      var prevVal = sel.value;
+      sel.innerHTML = '<option value="">Всички пазари</option>' +
+        uniqueMarkets.map(function(m){ return '<option value="' + escHtml(m) + '">' + escHtml(m) + '</option>'; }).join('');
+      if (uniqueMarkets.indexOf(prevVal) !== -1) sel.value = prevVal; // запазваме избора между refresh-и
+    }
+
+    // ── Анализ панела филтрираме по избрания пазар (таблицата долу
+    // остава показваща ВСИЧКИ сигнали, само анализа се стеснява). ──
+    var selectedMarket = sel ? sel.value : '';
+    var analysisItems = selectedMarket ? items.filter(function(it){ return (it.market_label||'—') === selectedMarket; }) : items;
+    peRenderAnalysis(analysisItems, selectedMarket);
 
     if (!items.length) { wrap.innerHTML = '<div style="text-align:center;padding:.5rem 0">Няма запазени сигнали още.</div>'; return; }
 
