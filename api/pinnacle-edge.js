@@ -72,6 +72,7 @@ export default async function handler(req, res) {
           market_side: row.market_side || null,
           market_line: row.market_line != null ? row.market_line : null,
           market_label: row.market_label || null,
+          market_force_corners: row.market_force_corners ? 1 : 0,
           fair_price: row.fair_price != null ? row.fair_price : null,
           bet365_odds: row.bet365_odds != null ? row.bet365_odds : null,
           edge_pct: row.edge_pct != null ? row.edge_pct : null,
@@ -97,7 +98,7 @@ export default async function handler(req, res) {
         id, final_score_home, final_score_away, final_corners_home, final_corners_away,
         // ✅ Редактиране на основните полета на сигнала (не само резултата) —
         // за бутона "✏️ Редактирай" в UI-то.
-        home, away, league, setting, market, market_side, market_line, market_label,
+        home, away, league, setting, market, market_side, market_line, market_label, market_force_corners,
         fair_price, bet365_odds, edge_pct, implied_prob, kickoff_txt,
       } = req.body || {};
       if (!id) { res.status(400).json({ ok: false, error: "missing_id" }); return; }
@@ -123,6 +124,7 @@ export default async function handler(req, res) {
       if (market_side !== undefined) full.market_side = market_side;
       if (market_line !== undefined) full.market_line = market_line;
       if (market_label !== undefined) full.market_label = market_label;
+      if (market_force_corners !== undefined) full.market_force_corners = market_force_corners ? 1 : 0;
       if (fair_price !== undefined) full.fair_price = fair_price;
       if (bet365_odds !== undefined) full.bet365_odds = bet365_odds;
       if (edge_pct !== undefined) full.edge_pct = edge_pct;

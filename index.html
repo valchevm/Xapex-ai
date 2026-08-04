@@ -12148,8 +12148,42 @@ function peToggle() {
 function peParseMarket(txt) {
   txt = (txt || '').trim();
   var m;
+
+  // ✅ По-специфичните patterns се проверяват ПРЕДИ общите ("Corners
+  // Totals"/"Team Total" съдържат думата "Total", затова трябва да се
+  // хванат първо, иначе общия "Totals" regex би ги "изял" грешно).
+
   if (/ML\s*-\s*Home/i.test(txt)) return { market: 'ML', side: 'Home', line: null, label: 'ML - Home' };
   if (/ML\s*-\s*Away/i.test(txt)) return { market: 'ML', side: 'Away', line: null, label: 'ML - Away' };
+
+  if (/Draw No Bet\s*-\s*Home/i.test(txt)) return { market: 'DNB', side: 'Home', line: null, label: 'Draw No Bet - Home' };
+  if (/Draw No Bet\s*-\s*Away/i.test(txt)) return { market: 'DNB', side: 'Away', line: null, label: 'Draw No Bet - Away' };
+
+  m = txt.match(/Both Teams To Score\s*-\s*(Yes|No)/i);
+  if (m) return { market: 'BTTS', side: m[1].charAt(0).toUpperCase()+m[1].slice(1).toLowerCase(), line: null, label: 'Both Teams To Score - ' + m[1] };
+
+  m = txt.match(/Team Total Home\s*-\s*Over\s*\(?([\d.]+)\)?/i);
+  if (m) return { market: 'TeamTotal', side: 'HomeOver', line: parseFloat(m[1]), label: 'Team Total Home - Over (' + m[1] + ')' };
+  m = txt.match(/Team Total Home\s*-\s*Under\s*\(?([\d.]+)\)?/i);
+  if (m) return { market: 'TeamTotal', side: 'HomeUnder', line: parseFloat(m[1]), label: 'Team Total Home - Under (' + m[1] + ')' };
+  m = txt.match(/Team Total Away\s*-\s*Over\s*\(?([\d.]+)\)?/i);
+  if (m) return { market: 'TeamTotal', side: 'AwayOver', line: parseFloat(m[1]), label: 'Team Total Away - Over (' + m[1] + ')' };
+  m = txt.match(/Team Total Away\s*-\s*Under\s*\(?([\d.]+)\)?/i);
+  if (m) return { market: 'TeamTotal', side: 'AwayUnder', line: parseFloat(m[1]), label: 'Team Total Away - Under (' + m[1] + ')' };
+
+  // ✅ Явен "Corners Spread"/"Corners Totals" текст (ако OddAlerts го
+  // изпише буквално така, вместо generic Spread/Totals + Setting:Corners).
+  // Маркираме market_forceCorners, за да знае outcome логиката да
+  // ползва корнер данни независимо от Setting стойността.
+  m = txt.match(/Corners Totals\s*-\s*Over\s*\(?([\d.]+)\)?/i);
+  if (m) return { market: 'Totals', side: 'Over', line: parseFloat(m[1]), label: 'Corners Totals - Over (' + m[1] + ')', forceCorners: true };
+  m = txt.match(/Corners Totals\s*-\s*Under\s*\(?([\d.]+)\)?/i);
+  if (m) return { market: 'Totals', side: 'Under', line: parseFloat(m[1]), label: 'Corners Totals - Under (' + m[1] + ')', forceCorners: true };
+  m = txt.match(/Corners Spread\s*-\s*Home\s*\(?([+-]?[\d.]+)\)?/i);
+  if (m) { var lineCH = parseFloat(m[1]); return { market: 'Spread', side: 'Home', line: lineCH, label: 'Corners Spread - Home (' + (lineCH>=0?'+':'') + lineCH + ')', forceCorners: true }; }
+  m = txt.match(/Corners Spread\s*-\s*Away\s*\(?([+-]?[\d.]+)\)?/i);
+  if (m) { var lineCA = parseFloat(m[1]); return { market: 'Spread', side: 'Away', line: lineCA, label: 'Corners Spread - Away (' + (lineCA>=0?'+':'') + lineCA + ')', forceCorners: true }; }
+
   m = txt.match(/Totals\s*-\s*Over\s*\(?([\d.]+)\)?/i);
   if (m) return { market: 'Totals', side: 'Over', line: parseFloat(m[1]), label: 'Totals - Over (' + m[1] + ')' };
   m = txt.match(/Totals\s*-\s*Under\s*\(?([\d.]+)\)?/i);
@@ -12158,6 +12192,13 @@ function peParseMarket(txt) {
   if (m) { var lineH = parseFloat(m[1]); return { market: 'Spread', side: 'Home', line: lineH, label: 'Spread - Home (' + (lineH>=0?'+':'') + lineH + ')' }; }
   m = txt.match(/Spread\s*-\s*Away\s*\(?([+-]?[\d.]+)\)?/i);
   if (m) { var lineA = parseFloat(m[1]); return { market: 'Spread', side: 'Away', line: lineA, label: 'Spread - Away (' + (lineA>=0?'+':'') + lineA + ')' }; }
+
+  // ⚠ Разпознати, но НЕ МОЖЕМ да ги разрешим с наличните данни (нужни
+  // са HT резултат / картони / player статистика — не се пазят сега).
+  if (/^(Spread HT|Totals HT|Corners Totals HT|Spread 1Q|Totals 1Q|Player Props|Bookings)/i.test(txt)) {
+    return { market: 'Unsupported', side: null, line: null, label: txt };
+  }
+
   return { market: null, side: null, line: null, label: txt || '—' };
 }
 
@@ -12251,6 +12292,7 @@ function peParseEmojiFormat(text) {
       market_side: parsedMarket.side,
       market_line: parsedMarket.line,
       market_label: parsedMarket.label,
+      market_force_corners: parsedMarket.forceCorners || false,
       fair_price: fairM ? parseFloat(fairM[1]) : null,
       bet365_odds: betM ? parseFloat(betM[1]) : null,
       edge_pct: edgeM ? parseFloat(edgeM[1]) : null,
@@ -12319,6 +12361,7 @@ function peParsePlainFormat(text) {
       market_side: parsedMarket.side,
       market_line: parsedMarket.line,
       market_label: parsedMarket.label,
+      market_force_corners: parsedMarket.forceCorners || false,
       fair_price: fairM ? parseFloat(fairM[1]) : null,
       bet365_odds: betM ? parseFloat(betM[1]) : null,
       edge_pct: edgeM ? parseFloat(edgeM[1]) : null,
@@ -12333,45 +12376,55 @@ function peParsePlainFormat(text) {
 
 // ── Изчислява изход (WIN/LOSE/PUSH/PENDING) + профит от резултат ──
 function peComputeOutcome(sig) {
+  // ⚠ Пазари, разпознати но НЕ МОЖЕМ да разрешим с наличните данни
+  // (HT резултат / картони / player статистика — не се пазят).
+  if (sig.market === 'Unsupported') return { outcome: 'PENDING', profit: null };
+
   // ✅ КРИТИЧЕН ФИКС: "Setting: Goals/Corners" НЕ определя пазара —
-  // определя го market_label (5-ти ред от сигнала). Setting има
-  // значение САМО за "Totals" пазар (дали Over/Under линията е за
-  // голове или корнери — самият пазарен текст не го казва явно).
-  // За "ML" пазар (краен победител) ВИНАГИ трябва да се гледат
-  // ГОЛОВЕ — отбор може да загуби "корнер битката", но пак да
-  // спечели мача. Преди този фикс, ML сигнал с Setting:Corners
-  // грешно чакаше/ползваше корнер данни за определяне на победител.
-  if (sig.market === 'ML') {
-    var h = sig.final_score_home, a = sig.final_score_away;
-    if (h == null || a == null || h === '' || a === '') return { outcome: 'PENDING', profit: null };
-    h = parseFloat(h); a = parseFloat(a);
-    if (isNaN(h) || isNaN(a)) return { outcome: 'PENDING', profit: null };
-    return peResolveTotalsOrML(sig, h, a);
+  // определя го market_label. Setting има значение САМО за "Totals"/
+  // "Spread" пазар (дали линията е за голове или корнери). За "ML",
+  // "Draw No Bet", "Both Teams To Score", "Team Total" пазари ВИНАГИ
+  // се гледат ГОЛОВЕ — тези пазари по дефиниция са за краен резултат,
+  // не за корнери, независимо какво казва Setting.
+  var useCorners = !!sig.market_force_corners ||
+    ((sig.market === 'Totals' || sig.market === 'Spread') && sig.setting === 'Corners');
+  if (sig.market === 'ML' || sig.market === 'DNB' || sig.market === 'BTTS' || sig.market === 'TeamTotal') {
+    useCorners = false;
   }
 
-  if (sig.market === 'Totals' && sig.setting === 'Corners') {
-    var ch = sig.final_corners_home, ca = sig.final_corners_away;
-    if (ch == null || ca == null || ch === '' || ca === '') return { outcome: 'PENDING', profit: null };
-    ch = parseFloat(ch); ca = parseFloat(ca);
-    if (isNaN(ch) || isNaN(ca)) return { outcome: 'PENDING', profit: null };
-    return peResolveTotalsOrML(sig, ch, ca);
-  }
-
-  // Totals + Setting: Goals (или непознат/липсващ setting — fallback на голове)
-  var h2 = sig.final_score_home, a2 = sig.final_score_away;
-  if (h2 == null || a2 == null || h2 === '' || a2 === '') return { outcome: 'PENDING', profit: null };
-  h2 = parseFloat(h2); a2 = parseFloat(a2);
-  if (isNaN(h2) || isNaN(a2)) return { outcome: 'PENDING', profit: null };
-  return peResolveTotalsOrML(sig, h2, a2);
+  var h, a;
+  if (useCorners) { h = sig.final_corners_home; a = sig.final_corners_away; }
+  else { h = sig.final_score_home; a = sig.final_score_away; }
+  if (h == null || a == null || h === '' || a === '') return { outcome: 'PENDING', profit: null };
+  h = parseFloat(h); a = parseFloat(a);
+  if (isNaN(h) || isNaN(a)) return { outcome: 'PENDING', profit: null };
+  return peResolveTotalsOrML(sig, h, a);
 }
 
-// ── Споделена логика ML/Totals — ползва се и за голове, и за корнери ──
+// ── Споделена логика за всички разрешими пазари — голове или корнери,
+// подадени вече от peComputeOutcome спрямо useCorners. ──
 function peResolveTotalsOrML(sig, h, a) {
   var outcome;
   if (sig.market === 'ML' && sig.market_side === 'Home') {
     outcome = h > a ? 'WIN' : 'LOSE';
   } else if (sig.market === 'ML' && sig.market_side === 'Away') {
     outcome = a > h ? 'WIN' : 'LOSE';
+  } else if (sig.market === 'DNB' && sig.market_side === 'Home') {
+    outcome = h === a ? 'PUSH' : (h > a ? 'WIN' : 'LOSE');
+  } else if (sig.market === 'DNB' && sig.market_side === 'Away') {
+    outcome = h === a ? 'PUSH' : (a > h ? 'WIN' : 'LOSE');
+  } else if (sig.market === 'BTTS' && sig.market_side === 'Yes') {
+    outcome = (h > 0 && a > 0) ? 'WIN' : 'LOSE';
+  } else if (sig.market === 'BTTS' && sig.market_side === 'No') {
+    outcome = (h === 0 || a === 0) ? 'WIN' : 'LOSE';
+  } else if (sig.market === 'TeamTotal' && sig.market_side === 'HomeOver') {
+    outcome = h > sig.market_line ? 'WIN' : (h === sig.market_line ? 'PUSH' : 'LOSE');
+  } else if (sig.market === 'TeamTotal' && sig.market_side === 'HomeUnder') {
+    outcome = h < sig.market_line ? 'WIN' : (h === sig.market_line ? 'PUSH' : 'LOSE');
+  } else if (sig.market === 'TeamTotal' && sig.market_side === 'AwayOver') {
+    outcome = a > sig.market_line ? 'WIN' : (a === sig.market_line ? 'PUSH' : 'LOSE');
+  } else if (sig.market === 'TeamTotal' && sig.market_side === 'AwayUnder') {
+    outcome = a < sig.market_line ? 'WIN' : (a === sig.market_line ? 'PUSH' : 'LOSE');
   } else if (sig.market === 'Totals' && sig.market_side === 'Over') {
     var total = h + a;
     outcome = total > sig.market_line ? 'WIN' : (total === sig.market_line ? 'PUSH' : 'LOSE');
@@ -12946,6 +12999,7 @@ function peSaveEdit(id) {
     market_side: parsedMarket.side,
     market_line: parsedMarket.line,
     market_label: parsedMarket.market ? parsedMarket.label : marketLabelTxt, // запазваме ръчния текст, ако не се разпознае
+    market_force_corners: parsedMarket.forceCorners || false,
     fair_price: gv('peE_fair') !== '' ? parseFloat(gv('peE_fair')) : null,
     bet365_odds: gv('peE_odds') !== '' ? parseFloat(gv('peE_odds')) : null,
     edge_pct: gv('peE_edge') !== '' ? parseFloat(gv('peE_edge')) : null,
@@ -13046,7 +13100,7 @@ function peLoadLog() {
         '<td style="padding:.35rem"><input id="peAway_' + it.id + '" type="number" step="1" value="' + (it.final_score_away!=null?it.final_score_away:'') + '" style="width:36px;font-size:.6rem;padding:2px" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
         '<td style="padding:.35rem"><input id="peCornH_' + it.id + '" type="number" step="1" value="' + (it.final_corners_home!=null?it.final_corners_home:'') + '" style="width:36px;font-size:.6rem;padding:2px' + (isCorners?';border-color:#a78bfa':'') + '" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
         '<td style="padding:.35rem"><input id="peCornA_' + it.id + '" type="number" step="1" value="' + (it.final_corners_away!=null?it.final_corners_away:'') + '" style="width:36px;font-size:.6rem;padding:2px' + (isCorners?';border-color:#a78bfa':'') + '" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
-        '<td style="padding:.35rem;color:' + (outcomeColor[it.outcome]||'var(--dim)') + ';font-weight:700">' + it.outcome + '</td>' +
+        '<td style="padding:.35rem;color:' + (it.market==='Unsupported' ? 'var(--dim)' : (outcomeColor[it.outcome]||'var(--dim)')) + ';font-weight:700" title="' + (it.market==='Unsupported' ? 'Този пазар не може да се разреши автоматично (нужни HT/картони/player данни)' : '') + '">' + (it.market==='Unsupported' ? '⚠ N/A' : it.outcome) + '</td>' +
         '<td style="padding:.35rem;color:' + (it.profit>0?'var(--grn)':it.profit<0?'var(--red)':'var(--dim)') + '">' + (it.profit!=null ? (it.profit>=0?'+':'') + it.profit.toFixed(2) : '—') + '</td>' +
         '<td style="padding:.35rem;white-space:nowrap"><button class="btn btn-sec" style="font-size:.55rem;padding:2px 6px" onclick="peOpenEdit(\'' + it.id + '\')">✏️</button> <button class="btn btn-sec" style="font-size:.55rem;padding:2px 6px" onclick="peDeleteRow(\'' + it.id + '\')">🗑</button></td>' +
       '</tr>';
