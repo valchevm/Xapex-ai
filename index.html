@@ -13249,19 +13249,31 @@ function peLoadLog() {
     });
     window.PE_LAST_ITEMS = items; // за бутона за редактиране
 
-    // ── Попълваме dropdown-а с уникалните пазари, налични в данните ──
+    // ── Попълваме dropdown-а с уникалните пазари — активни (избираеми)
+    // само тези с поне един ЗАВЪРШИЛ (WIN/LOSE/PUSH) сигнал; тези само
+    // с чакащи се показват маркирани и ЗАКЛЮЧЕНИ (няма смисъл да
+    // анализираш пазар без нито един разрешен резултат). ──
     var sel = document.getElementById('peAnalysisMarketFilter');
     if (sel) {
-      var uniqueMarkets = [];
+      var marketStats = {}; // label -> { settled: n, pending: n }
       items.forEach(function(it){
         var lbl = it.market_label || '—';
-        if (uniqueMarkets.indexOf(lbl) === -1) uniqueMarkets.push(lbl);
+        if (!marketStats[lbl]) marketStats[lbl] = { settled: 0, pending: 0 };
+        if (it.outcome === 'PENDING') marketStats[lbl].pending++;
+        else marketStats[lbl].settled++;
       });
-      uniqueMarkets.sort();
+      var uniqueMarkets = Object.keys(marketStats).sort();
       var prevVal = sel.value;
       sel.innerHTML = '<option value="">Всички пазари</option>' +
-        uniqueMarkets.map(function(m){ return '<option value="' + escHtml(m) + '">' + escHtml(m) + '</option>'; }).join('');
-      if (uniqueMarkets.indexOf(prevVal) !== -1) sel.value = prevVal; // запазваме избора между refresh-и
+        uniqueMarkets.map(function(m){
+          var st = marketStats[m];
+          if (st.settled > 0) {
+            return '<option value="' + escHtml(m) + '">' + escHtml(m) + ' (' + st.settled + ')</option>';
+          }
+          return '<option value="' + escHtml(m) + '" disabled>🔒 ' + escHtml(m) + ' — ' + st.pending + ' чакащи, 0 завършили</option>';
+        }).join('');
+      if (uniqueMarkets.indexOf(prevVal) !== -1 && marketStats[prevVal].settled > 0) sel.value = prevVal; // запазваме избора само ако все още е избираем
+      else sel.value = '';
     }
 
     // ── Анализ панела филтрираме по избрания пазар И дата (таблицата
@@ -13296,36 +13308,47 @@ function peLoadLog() {
 
     var outcomeColor = { WIN:'var(--grn)', LOSE:'var(--red)', PUSH:'var(--dim)', PENDING:'var(--yel)' };
 
+    function peFormatKickoffStacked(it) {
+      if (it.kickoff_date_iso) {
+        var d = new Date(it.kickoff_date_iso);
+        if (!isNaN(d.getTime())) {
+          var dateStr = fxFormatMatchDate ? fxFormatMatchDate(d.toISOString().slice(0,10)) : d.toISOString().slice(0,10);
+          var timeStr = String(d.getUTCHours()).padStart(2,'0') + ':' + String(d.getUTCMinutes()).padStart(2,'0');
+          return '<div>' + dateStr + '</div><div style="color:var(--dim)">' + timeStr + '</div>';
+        }
+      }
+      return '<div style="white-space:nowrap">' + escHtml(it.kickoff_txt||'—') + '</div>';
+    }
+
     var rows = items.map(function(it){
-      var isCorners = it.setting === 'Corners';
+      var isCorners = it.market_force_corners;
       return '<tr style="border-bottom:1px solid var(--bord)' + (isCorners ? ';background:rgba(167,139,250,.04)' : '') + '">' +
-        '<td style="padding:.35rem;white-space:nowrap">' + escHtml(it.home) + ' <span style="color:var(--dim)">vs</span> ' + escHtml(it.away) + '</td>' +
-        '<td style="padding:.35rem">' + escHtml(it.league||'—') + '</td>' +
-        '<td style="padding:.35rem' + (isCorners ? ';color:#a78bfa;font-weight:600' : '') + '">' + it.setting + '</td>' +
-        '<td style="padding:.35rem;white-space:nowrap">' + escHtml(it.market_label||'—') + '</td>' +
-        '<td style="padding:.35rem">' + (it.fair_price!=null?it.fair_price:'—') + '</td>' +
-        '<td style="padding:.35rem">' + (it.bet365_odds!=null?it.bet365_odds:'—') + '</td>' +
-        '<td style="padding:.35rem;color:var(--grn)">' + (it.edge_pct!=null?it.edge_pct+'%':'—') + '</td>' +
-        '<td style="padding:.35rem">' + (it.implied_prob!=null?it.implied_prob+'%':'—') + '</td>' +
-        '<td style="padding:.35rem;white-space:nowrap">' + escHtml(it.kickoff_txt||'—') + '</td>' +
-        '<td style="padding:.35rem"><input id="peHome_' + it.id + '" type="number" step="1" value="' + (it.final_score_home!=null?it.final_score_home:'') + '" style="width:36px;font-size:.6rem;padding:2px" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
-        '<td style="padding:.35rem"><input id="peAway_' + it.id + '" type="number" step="1" value="' + (it.final_score_away!=null?it.final_score_away:'') + '" style="width:36px;font-size:.6rem;padding:2px" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
-        '<td style="padding:.35rem"><input id="peCornH_' + it.id + '" type="number" step="1" value="' + (it.final_corners_home!=null?it.final_corners_home:'') + '" style="width:36px;font-size:.6rem;padding:2px' + (isCorners?';border-color:#a78bfa':'') + '" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
-        '<td style="padding:.35rem"><input id="peCornA_' + it.id + '" type="number" step="1" value="' + (it.final_corners_away!=null?it.final_corners_away:'') + '" style="width:36px;font-size:.6rem;padding:2px' + (isCorners?';border-color:#a78bfa':'') + '" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
-        '<td style="padding:.35rem;color:' + (it.market==='Unsupported' ? 'var(--dim)' : (outcomeColor[it.outcome]||'var(--dim)')) + ';font-weight:700" title="' + (it.market==='Unsupported' ? 'Този пазар не може да се разреши автоматично (нужни HT/картони/player данни)' : '') + '">' + (it.market==='Unsupported' ? '⚠ N/A' : it.outcome) + '</td>' +
-        '<td style="padding:.35rem;color:' + (it.profit>0?'var(--grn)':it.profit<0?'var(--red)':'var(--dim)') + '">' + (it.profit!=null ? (it.profit>=0?'+':'') + it.profit.toFixed(2) : '—') + '</td>' +
-        '<td style="padding:.35rem;white-space:nowrap"><button class="btn btn-sec" style="font-size:.55rem;padding:2px 6px" onclick="peOpenEdit(\'' + it.id + '\')">✏️</button> <button class="btn btn-sec" style="font-size:.55rem;padding:2px 6px" onclick="peDeleteRow(\'' + it.id + '\')">🗑</button></td>' +
+        '<td style="padding:.2rem .3rem;white-space:nowrap;line-height:1.3"><div>' + escHtml(it.home) + '</div><div style="color:var(--dim)">' + escHtml(it.away) + '</div></td>' +
+        '<td style="padding:.2rem .3rem">' + escHtml(it.league||'—') + '</td>' +
+        '<td style="padding:.2rem .3rem;white-space:nowrap' + (isCorners ? ';color:#a78bfa;font-weight:600' : '') + '">' + escHtml(it.market_label||'—') + '</td>' +
+        '<td style="padding:.2rem .3rem">' + (it.fair_price!=null?it.fair_price:'—') + '</td>' +
+        '<td style="padding:.2rem .3rem">' + (it.bet365_odds!=null?it.bet365_odds:'—') + '</td>' +
+        '<td style="padding:.2rem .3rem;color:var(--grn)">' + (it.edge_pct!=null?it.edge_pct+'%':'—') + '</td>' +
+        '<td style="padding:.2rem .3rem">' + (it.implied_prob!=null?it.implied_prob+'%':'—') + '</td>' +
+        '<td style="padding:.2rem .3rem;line-height:1.3">' + peFormatKickoffStacked(it) + '</td>' +
+        '<td style="padding:.2rem .1rem"><input id="peHome_' + it.id + '" type="number" step="1" value="' + (it.final_score_home!=null?it.final_score_home:'') + '" style="width:32px;font-size:.58rem;padding:2px" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
+        '<td style="padding:.2rem .1rem"><input id="peAway_' + it.id + '" type="number" step="1" value="' + (it.final_score_away!=null?it.final_score_away:'') + '" style="width:32px;font-size:.58rem;padding:2px" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
+        '<td style="padding:.2rem .1rem"><input id="peCornH_' + it.id + '" type="number" step="1" value="' + (it.final_corners_home!=null?it.final_corners_home:'') + '" style="width:32px;font-size:.58rem;padding:2px' + (isCorners?';border-color:#a78bfa':'') + '" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
+        '<td style="padding:.2rem .1rem"><input id="peCornA_' + it.id + '" type="number" step="1" value="' + (it.final_corners_away!=null?it.final_corners_away:'') + '" style="width:32px;font-size:.58rem;padding:2px' + (isCorners?';border-color:#a78bfa':'') + '" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
+        '<td style="padding:.2rem .3rem;color:' + (it.market==='Unsupported' ? 'var(--dim)' : (outcomeColor[it.outcome]||'var(--dim)')) + ';font-weight:700" title="' + (it.market==='Unsupported' ? 'Този пазар не може да се разреши автоматично (нужни HT/картони/player данни)' : '') + '">' + (it.market==='Unsupported' ? '⚠ N/A' : it.outcome) + '</td>' +
+        '<td style="padding:.2rem .3rem;color:' + (it.profit>0?'var(--grn)':it.profit<0?'var(--red)':'var(--dim)') + '">' + (it.profit!=null ? (it.profit>=0?'+':'') + it.profit.toFixed(2) : '—') + '</td>' +
+        '<td style="padding:.2rem .2rem;white-space:nowrap"><button class="btn btn-sec" style="font-size:.53rem;padding:1px 4px" onclick="peOpenEdit(\'' + it.id + '\')">✏️</button> <button class="btn btn-sec" style="font-size:.53rem;padding:1px 4px" onclick="peDeleteRow(\'' + it.id + '\')">🗑</button></td>' +
       '</tr>';
     }).join('');
 
-    wrap.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:.58rem">' +
+    wrap.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:.56rem">' +
       '<thead><tr style="border-bottom:2px solid var(--bord);color:var(--acc);text-align:left">' +
-        '<th style="padding:.35rem">Мач</th><th style="padding:.35rem">Лига</th><th style="padding:.35rem">Setting</th>' +
-        '<th style="padding:.35rem">Пазар</th><th style="padding:.35rem">Fair</th><th style="padding:.35rem">Bet365</th>' +
-        '<th style="padding:.35rem">Edge</th><th style="padding:.35rem">Implied</th><th style="padding:.35rem">Kickoff</th>' +
-        '<th style="padding:.35rem">Дом. гол</th><th style="padding:.35rem">Гост гол</th>' +
-        '<th style="padding:.35rem;color:#a78bfa">Дом. корн.</th><th style="padding:.35rem;color:#a78bfa">Гост корн.</th>' +
-        '<th style="padding:.35rem">Изход</th><th style="padding:.35rem">Профит</th><th style="padding:.35rem"></th>' +
+        '<th style="padding:.2rem .3rem">Мач</th><th style="padding:.2rem .3rem">Лига</th>' +
+        '<th style="padding:.2rem .3rem">Пазар</th><th style="padding:.2rem .3rem">Fair</th><th style="padding:.2rem .3rem">Bet365</th>' +
+        '<th style="padding:.2rem .3rem">Edge</th><th style="padding:.2rem .3rem">Implied</th><th style="padding:.2rem .3rem">Kickoff</th>' +
+        '<th style="padding:.2rem .1rem">Д.гол</th><th style="padding:.2rem .1rem">Г.гол</th>' +
+        '<th style="padding:.2rem .1rem;color:#a78bfa">Д.корн.</th><th style="padding:.2rem .1rem;color:#a78bfa">Г.корн.</th>' +
+        '<th style="padding:.2rem .3rem">Изход</th><th style="padding:.2rem .3rem">Профит</th><th style="padding:.2rem .2rem"></th>' +
       '</tr></thead><tbody>' + rows + '</tbody></table>';
   }).catch(function(e){
     wrap.innerHTML = '<div style="color:var(--red)">❌ ' + e.message + '</div>';
