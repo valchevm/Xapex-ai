@@ -3881,6 +3881,23 @@ input::placeholder, textarea::placeholder {
       <div id="peResultsCsvResult" style="margin-top:.4rem;font-size:.58rem;color:var(--dim)"></div>
     </div>
 
+    <!-- ── Ръчни алиаси за отбори — за случаи, когато две имена за
+         същия отбор нямат нищо общо буквено (напр. "SC Brasil
+         Capixaba ES" = "Espirito Santo ES") и никакъв алгоритъм не
+         може да ги съпостави без изрична информация от потребителя. ── -->
+    <div style="background:#07101f;border:1px solid rgba(167,139,250,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
+      <div style="font-size:.66rem;color:#a78bfa;font-weight:600;margin-bottom:.4rem">🔗 Ръчни алиаси за отбори</div>
+      <div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem;line-height:1.5">
+        Ако име от сигнал и име от резултатен файл са за същия отбор, но напълно различни изписвания — добави тук веднъж, ще важи занапред за всички качвания.
+      </div>
+      <div style="display:flex;gap:.4rem;margin-bottom:.4rem">
+        <input id="peAliasA" placeholder="Име от сигнала" style="flex:1;padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.6rem">
+        <input id="peAliasB" placeholder="Име от резултатите" style="flex:1;padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.6rem">
+        <button class="btn btn-p" style="width:auto;margin-top:0;padding:.4rem .7rem" onclick="peAddAlias()">➕</button>
+      </div>
+      <div id="peAliasList" style="font-size:.58rem;color:var(--dim)"></div>
+    </div>
+
     <div style="display:flex;align-items:center;gap:.4rem;margin-bottom:.5rem">
       <span style="font-size:.66rem;color:var(--acc);font-weight:600">📊 Сигнали</span>
       <button class="btn btn-sec" style="font-size:.58rem;padding:3px 8px" onclick="peCleanDuplicates()">🧹 Изчисти дубликати</button>
@@ -12151,6 +12168,7 @@ function peToggle() {
   p.style.display = shown ? 'none' : 'block';
   a.textContent   = shown ? '▶' : '▼';
   if (!shown) {
+    peRenderAliasList();
     peLoadLog();
   }
 }
@@ -12835,6 +12853,39 @@ function peParseSemicolonLine(line) {
 // и т.н.), пунктуация — за да намалим пропуснатите съвпадения заради
 // различия в изписването между различните източници (OddAlerts vs
 // AiScore). ──
+// ── Ръчни алиаси за отбори — за случаи, когато две имена за същия
+// отбор нямат нищо буквено общо (напр. различни спонсорски/градски
+// имена между източниците). Пази се в localStorage. ──
+var PE_ALIASES = [];
+(function(){ try { PE_ALIASES = JSON.parse(localStorage.getItem('pe_team_aliases') || '[]'); } catch(e){ PE_ALIASES = []; } })();
+function peSaveAliases() { try { localStorage.setItem('pe_team_aliases', JSON.stringify(PE_ALIASES)); } catch(e){} }
+
+function peAddAlias() {
+  var aEl = document.getElementById('peAliasA'), bEl = document.getElementById('peAliasB');
+  var a = aEl.value.trim(), b = bEl.value.trim();
+  if (!a || !b) return;
+  PE_ALIASES.push({ a: a, b: b });
+  peSaveAliases();
+  aEl.value = ''; bEl.value = '';
+  peRenderAliasList();
+}
+function peRemoveAlias(idx) {
+  PE_ALIASES.splice(idx, 1);
+  peSaveAliases();
+  peRenderAliasList();
+}
+function peRenderAliasList() {
+  var box = document.getElementById('peAliasList');
+  if (!box) return;
+  if (!PE_ALIASES.length) { box.innerHTML = '<div style="color:var(--dim)">Няма добавени алиаси още.</div>'; return; }
+  box.innerHTML = PE_ALIASES.map(function(al, i){
+    return '<div style="display:flex;align-items:center;gap:.4rem;padding:.25rem 0">' +
+      '<span style="flex:1">' + escHtml(al.a) + ' <span style="color:#a78bfa">=</span> ' + escHtml(al.b) + '</span>' +
+      '<button class="btn btn-sec" style="font-size:.5rem;padding:1px 5px" onclick="peRemoveAlias(' + i + ')">✕</button>' +
+    '</div>';
+  }).join('');
+}
+
 function peNormTeam(s) {
   s = (s || '').trim().toLowerCase();
   // Диакритика → базови латински букви (Žilina -> zilina)
@@ -12884,6 +12935,12 @@ function peFuzzyTeamMatch(a, b) {
   var na = peNormTeam(a), nb = peNormTeam(b);
   if (na === nb) return true;
   if (!na || !nb) return false;
+  // ✅ Ръчни алиаси — проверяваме първо, преди всякакъв алгоритъм.
+  // Двупосочно (a може да е от сигнала ИЛИ от резултатите).
+  for (var ai = 0; ai < PE_ALIASES.length; ai++) {
+    var alA = peNormTeam(PE_ALIASES[ai].a), alB = peNormTeam(PE_ALIASES[ai].b);
+    if ((na === alA && nb === alB) || (na === alB && nb === alA)) return true;
+  }
   if (na.length >= 4 && nb.length >= 4 && (na.indexOf(nb) !== -1 || nb.indexOf(na) !== -1)) return true;
   // Близко изписване на КРАТКИ (1-2 думи) имена — Levenshtein <=1 за
   // думи до 6 букви, <=2 за по-дълги (напр. "Hoedd" срещу "Hodd").
@@ -12895,10 +12952,23 @@ function peFuzzyTeamMatch(a, b) {
     var allowedDist = maxLen <= 6 ? 1 : 2;
     if (peLevenshtein(na, nb) <= allowedDist) return true;
   }
-  var wa = na.split(' ').filter(function(w){ return w.length > 2; });
-  var wb = nb.split(' ').filter(function(w){ return w.length > 2; });
+  // Клубни ID номера накрая (напр. "871" в "FK Eik Toensberg 871") —
+  // варират/липсват между източниците, не са част от идентичността.
+  // ✅ Праг >=2 (не >2) — кратки, но различаващи представки като "HB"
+  // (HB Torshavn срещу B36 Torshavn — два РАЗЛИЧНИ клуба от същия
+  // град) не трябва тихо да отпадат, оставяйки само градското име.
+  var wa = na.replace(/\s+\d+$/, '').split(' ').filter(function(w){ return w.length >= 2; });
+  var wb = nb.replace(/\s+\d+$/, '').split(' ').filter(function(w){ return w.length >= 2; });
   if (!wa.length || !wb.length) return false;
-  var shared = wa.filter(function(w){ return wb.indexOf(w) !== -1; });
+  // ✅ Дума "споделена", ако е ТОЧНО еднаква ИЛИ близка по изписване
+  // (Levenshtein <=1 за думи ≥5 букви) — напр. "toensberg"≈"tonsberg",
+  // "altai"≈"altay".
+  function wordsClose(w1, w2) {
+    if (w1 === w2) return true;
+    if (w1.length >= 5 && w2.length >= 5 && Math.abs(w1.length - w2.length) <= 2 && peLevenshtein(w1, w2) <= 1) return true;
+    return false;
+  }
+  var shared = wa.filter(function(w){ return wb.some(function(w2){ return wordsClose(w, w2); }); });
   var minLen = Math.min(wa.length, wb.length);
   // Поне 2 споделени думи (или всички, ако по-късото име има само 1)
   // и споделените да покриват МНОЗИНСТВОТО (>=60%) на по-късото име.
