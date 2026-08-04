@@ -12838,10 +12838,14 @@ function peNormTeam(s) {
   s = (s || '').trim().toLowerCase();
   // Диакритика → базови латински букви (Žilina -> zilina)
   s = s.normalize ? s.normalize('NFD').replace(/[\u0300-\u036f]/g, '') : s;
+  // Съдържание в скоби ("(W)", "(Res)" и т.н.) — маха се напълно
+  s = s.replace(/\([^)]*\)/g, ' ');
   // Пунктуация → интервал
   s = s.replace(/[.'’\-]/g, ' ');
   // Чести представки/суфикси, които варират между източниците
-  s = s.replace(/\b(fc|cf|sc|ac|afc|cfc|the)\b/g, ' ');
+  s = s.replace(/\b(fc|cf|sc|ac|afc|cfc|the|asociacion|associacao|association|club)\b/g, ' ');
+  // Джендър/квалификационни маркери — самостоятелна дума "w"/"women"/"ladies"/"girls"
+  s = s.replace(/\b(women|ladies|girls|w)\b/g, ' ');
   s = s.replace(/\s+/g, ' ').trim();
   return s;
 }
@@ -12849,7 +12853,9 @@ function peNormTeam(s) {
 // ── Fuzzy fallback — ако точното нормализирано съвпадение се провали
 // (напр. "AFC Ajax" срещу "Ajax Amsterdam" — различен формат между
 // източниците), проверяваме дали едното име СЪДЪРЖА другото, или
-// споделят достатъчно от думите си. ──
+// споделят достатъчно от думите си (мнозинство, не 100% — двете
+// страни може всяка да има собствена "излишна" дума, напр.
+// "Asociacion Deportivo Pasto" срещу "Deportivo Pasto Women"). ──
 function peFuzzyTeamMatch(a, b) {
   var na = peNormTeam(a), nb = peNormTeam(b);
   if (na === nb) return true;
@@ -12860,7 +12866,10 @@ function peFuzzyTeamMatch(a, b) {
   if (!wa.length || !wb.length) return false;
   var shared = wa.filter(function(w){ return wb.indexOf(w) !== -1; });
   var minLen = Math.min(wa.length, wb.length);
-  return shared.length >= minLen;
+  // Поне 2 споделени думи (или всички, ако по-късото име има само 1)
+  // и споделените да покриват МНОЗИНСТВОТО (>=60%) на по-късото име.
+  if (minLen === 1) return shared.length >= 1;
+  return shared.length >= 2 && (shared.length / minLen) >= 0.6;
 }
 
 // ── Нормализира различни формати резултатни файлове в общ вид:
