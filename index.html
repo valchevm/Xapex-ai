@@ -12587,10 +12587,11 @@ function peCleanDuplicates() {
     var items = (data && data.items) || [];
     var groups = {};
     items.forEach(function(it){
-      // ✅ За "Totals" пазар Setting (Goals/Corners) е част от идентичността
-      // на залога (различни резултати!) — само за "ML" се пропуска.
-      var settingPart = it.market === 'Totals' ? (it.setting||'') : '';
-      var key = (it.home||'').trim().toLowerCase() + '|' + (it.away||'').trim().toLowerCase() + '|' + (it.market_label||'') + '|' + settingPart;
+      // ✅ Setting вече не определя нищо за самия залог (виж
+      // peComputeOutcome) — само market_force_corners (буквален
+      // "Corners Totals/Spread" текст) прави реална разлика.
+      var forcePart = it.market_force_corners ? '1' : '0';
+      var key = (it.home||'').trim().toLowerCase() + '|' + (it.away||'').trim().toLowerCase() + '|' + (it.market_label||'') + '|' + forcePart;
       if (!groups[key]) groups[key] = [];
       groups[key].push(it);
     });
@@ -12842,12 +12843,35 @@ function peNormTeam(s) {
   s = s.replace(/\([^)]*\)/g, ' ');
   // Пунктуация → интервал
   s = s.replace(/[.'’\-]/g, ' ');
-  // Чести представки/суфикси, които варират между източниците
-  s = s.replace(/\b(fc|cf|sc|ac|afc|cfc|the|asociacion|associacao|association|club)\b/g, ' ');
+  // "Utd" → "united" (същата дума, различно съкращение между източниците)
+  s = s.replace(/\butd\b/g, 'united');
+  // U20/U21/U23/U19 и т.н. ↔ "Youth"/"Junior" — единен канон "youth"
+  s = s.replace(/\b(u1[6-9]|u2[0-9]|youth|junior|jr)\b/g, 'youth');
+  // Чести представки/суфикси, които варират между източниците (клубни
+  // типове от различни държави: FK/IL/EC/SK/IF/DF и т.н.)
+  s = s.replace(/\b(fc|cf|sc|ac|afc|cfc|the|asociacion|associacao|association|club|fk|il|ec|sk|if|df)\b/g, ' ');
   // Джендър/квалификационни маркери — самостоятелна дума "w"/"women"/"ladies"/"girls"
   s = s.replace(/\b(women|ladies|girls|w)\b/g, ' ');
   s = s.replace(/\s+/g, ' ').trim();
   return s;
+}
+
+// ── Levenshtein разстояние — за близки изписвания като "Hoedd"/"Hodd"
+// (различна транслитерация на едно и също име между източниците). ──
+function peLevenshtein(a, b) {
+  var m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  var prev = [], cur = [];
+  for (var j = 0; j <= n; j++) prev[j] = j;
+  for (var i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (var j2 = 1; j2 <= n; j2++) {
+      var cost = a[i-1] === b[j2-1] ? 0 : 1;
+      cur[j2] = Math.min(prev[j2] + 1, cur[j2-1] + 1, prev[j2-1] + cost);
+    }
+    prev = cur.slice();
+  }
+  return prev[n];
 }
 
 // ── Fuzzy fallback — ако точното нормализирано съвпадение се провали
@@ -12860,7 +12884,17 @@ function peFuzzyTeamMatch(a, b) {
   var na = peNormTeam(a), nb = peNormTeam(b);
   if (na === nb) return true;
   if (!na || !nb) return false;
-  if (na.indexOf(nb) !== -1 || nb.indexOf(na) !== -1) return true;
+  if (na.length >= 4 && nb.length >= 4 && (na.indexOf(nb) !== -1 || nb.indexOf(na) !== -1)) return true;
+  // Близко изписване на КРАТКИ (1-2 думи) имена — Levenshtein <=1 за
+  // думи до 6 букви, <=2 за по-дълги (напр. "Hoedd" срещу "Hodd").
+  // Минимум 4 символа и от двете страни — твърде кратки абревиатури
+  // (напр. "AIK" срещу "IK") НЕ трябва да съвпадат само защото са
+  // близки по буквен състав, без да е сигурно, че са същия клуб.
+  if (na.length >= 4 && nb.length >= 4 && na.length <= 14 && nb.length <= 14) {
+    var maxLen = Math.max(na.length, nb.length);
+    var allowedDist = maxLen <= 6 ? 1 : 2;
+    if (peLevenshtein(na, nb) <= allowedDist) return true;
+  }
   var wa = na.split(' ').filter(function(w){ return w.length > 2; });
   var wb = nb.split(' ').filter(function(w){ return w.length > 2; });
   if (!wa.length || !wb.length) return false;

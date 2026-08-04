@@ -39,16 +39,17 @@ export default async function handler(req, res) {
       // ✅ Дубликат защита — теглим съществуващите сигнали и пропускаме
       // редове, които вече присъстват (същия мач + пазар), вместо да
       // създаваме нов ред при всяко повторно качване на същия файл.
-      // ВАЖНО: за "Totals" пазар, Setting (Goals/Corners) СЪЩЕСТВЕНО
-      // променя залога (общо ГОЛОВЕ срещу общо КОРНЕРИ над/под същата
-      // линия — различни резултати!) — затова се включва в ключа. За
-      // "ML" пазар Setting е ирелевантно (краен победител си е един и
-      // същ, независимо от таг-а) — НЕ се включва, за да се дедуплицира
-      // правилно двойните ML записи, които OddAlerts понякога изпраща.
+      // ✅ ФИКС: Setting (Goals/Corners) вече НЕ определя нищо за самия
+      // залог (виж peComputeOutcome) — е само име на филтър в OddAlerts.
+      // Двата сигнала "Totals - Over (2.25) Setting:Goals" и "Totals -
+      // Over (2.25) Setting:Corners" за СЪЩИЯ мач са реално ЕДИН И
+      // СЪЩ залог (и двата се разрешават по голове) — трябва да се
+      // дедуплицират заедно. Само market_force_corners (буквален
+      // "Corners Totals/Spread" текст в пазара) прави реална разлика.
       const existingResp = await oraFetch(`/${TABLE}/?limit=500`, "GET");
       const existingItems = existingResp.json?.items || [];
       const dupKey = (r) =>
-        `${(r.home || "").trim().toLowerCase()}|${(r.away || "").trim().toLowerCase()}|${r.market_label || ""}|${r.market === "Totals" ? (r.setting || "") : ""}`;
+        `${(r.home || "").trim().toLowerCase()}|${(r.away || "").trim().toLowerCase()}|${r.market_label || ""}|${r.market_force_corners ? "1" : "0"}`;
       const existingKeys = new Set(existingItems.map(dupKey));
 
       let count = 0;
