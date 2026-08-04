@@ -3878,6 +3878,7 @@ input::placeholder, textarea::placeholder {
       <button class="btn btn-sec" style="font-size:.58rem;padding:3px 8px;color:#f87171" onclick="peDeleteAllPending()">🗑 Изтрий всички pending</button>
       <button class="btn btn-sec" style="margin-left:auto;font-size:.58rem;padding:3px 8px" onclick="peLoadLog()">🔄 Обнови</button>
     </div>
+    <div id="peEditPanel" style="display:none"></div>
     <div id="peTableWrap" style="font-size:.6rem;color:var(--dim);overflow-x:auto">Зареждане...</div>
   </div>
 </div>
@@ -12153,6 +12154,10 @@ function peParseMarket(txt) {
   if (m) return { market: 'Totals', side: 'Over', line: parseFloat(m[1]), label: 'Totals - Over (' + m[1] + ')' };
   m = txt.match(/Totals\s*-\s*Under\s*\(?([\d.]+)\)?/i);
   if (m) return { market: 'Totals', side: 'Under', line: parseFloat(m[1]), label: 'Totals - Under (' + m[1] + ')' };
+  m = txt.match(/Spread\s*-\s*Home\s*\(?([+-]?[\d.]+)\)?/i);
+  if (m) { var lineH = parseFloat(m[1]); return { market: 'Spread', side: 'Home', line: lineH, label: 'Spread - Home (' + (lineH>=0?'+':'') + lineH + ')' }; }
+  m = txt.match(/Spread\s*-\s*Away\s*\(?([+-]?[\d.]+)\)?/i);
+  if (m) { var lineA = parseFloat(m[1]); return { market: 'Spread', side: 'Away', line: lineA, label: 'Spread - Away (' + (lineA>=0?'+':'') + lineA + ')' }; }
   return { market: null, side: null, line: null, label: txt || '—' };
 }
 
@@ -12373,6 +12378,14 @@ function peResolveTotalsOrML(sig, h, a) {
   } else if (sig.market === 'Totals' && sig.market_side === 'Under') {
     var total2 = h + a;
     outcome = total2 < sig.market_line ? 'WIN' : (total2 === sig.market_line ? 'PUSH' : 'LOSE');
+  } else if (sig.market === 'Spread' && sig.market_side === 'Home') {
+    // ── "Spread - Home (+X)" — домакинът получава X голова преднина
+    // (X може да е и отрицателно, ако е фаворит и дава преднина). ──
+    var adjH = h + sig.market_line;
+    outcome = adjH > a ? 'WIN' : (adjH === a ? 'PUSH' : 'LOSE');
+  } else if (sig.market === 'Spread' && sig.market_side === 'Away') {
+    var adjA = a + sig.market_line;
+    outcome = adjA > h ? 'WIN' : (adjA === h ? 'PUSH' : 'LOSE');
   } else {
     return { outcome: 'PENDING', profit: null };
   }
@@ -12865,6 +12878,95 @@ function peImportResultsCsv(event) {
   reader.readAsText(file);
 }
 
+// ── Редактиране на сигнал (основните полета, не само резултата) ──
+function peOpenEdit(id) {
+  var it = (window.PE_LAST_ITEMS || []).find(function(x){ return x.id === id; });
+  if (!it) return;
+  var panel = document.getElementById('peEditPanel');
+  if (!panel) return;
+
+  panel.innerHTML =
+    '<div style="background:#0a1429;border:1px solid rgba(56,189,248,.3);border-radius:9px;padding:.7rem;margin-bottom:.8rem">' +
+      '<div style="font-size:.66rem;color:var(--acc);font-weight:600;margin-bottom:.5rem">✏️ Редактирай сигнал</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.4rem">' +
+        peEditField('peE_home','Домакин', it.home) +
+        peEditField('peE_away','Гост', it.away) +
+      '</div>' +
+      '<div style="margin-bottom:.4rem">' + peEditField('peE_league','Лига', it.league, true) + '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.4rem">' +
+        '<div><div style="font-size:.56rem;color:var(--dim);margin-bottom:.2rem">Setting</div>' +
+          '<select id="peE_setting" style="width:100%;padding:.4rem;background:#07101f;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.62rem">' +
+            '<option value="Goals"' + (it.setting==='Goals'?' selected':'') + '>Goals</option>' +
+            '<option value="Corners"' + (it.setting==='Corners'?' selected':'') + '>Corners</option>' +
+          '</select></div>' +
+        peEditField('peE_marketLabel','Пазар (напр. ML - Home, Totals - Over (2.5), Spread - Away (+1.75))', it.market_label, true) +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.4rem">' +
+        peEditField('peE_fair','Fair Price', it.fair_price) +
+        peEditField('peE_odds','Bet365 Odds', it.bet365_odds) +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.4rem">' +
+        peEditField('peE_edge','Edge %', it.edge_pct) +
+        peEditField('peE_implied','Implied Prob %', it.implied_prob) +
+      '</div>' +
+      '<div style="margin-bottom:.5rem">' + peEditField('peE_kickoff','Kickoff текст', it.kickoff_txt, true) + '</div>' +
+      '<div style="display:flex;gap:.5rem">' +
+        '<button class="btn btn-p" style="flex:1;width:auto;margin-top:0" onclick="peSaveEdit(\'' + id + '\')">💾 Запази</button>' +
+        '<button class="btn btn-sec" style="flex:0 0 auto;width:auto;margin-top:0" onclick="peCloseEdit()">✕ Откажи</button>' +
+      '</div>' +
+    '</div>';
+  panel.style.display = 'block';
+  panel.scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+function peEditField(id, label, value, wide) {
+  return '<div' + (wide?' style="grid-column:1/-1"':'') + '>' +
+    '<div style="font-size:.56rem;color:var(--dim);margin-bottom:.2rem">' + label + '</div>' +
+    '<input id="' + id + '" value="' + (value!=null?String(value).replace(/"/g,'&quot;'):'') + '" style="width:100%;padding:.4rem;background:#07101f;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.62rem;font-family:var(--mono);box-sizing:border-box">' +
+  '</div>';
+}
+
+function peCloseEdit() {
+  var panel = document.getElementById('peEditPanel');
+  if (panel) { panel.style.display = 'none'; panel.innerHTML = ''; }
+}
+
+function peSaveEdit(id) {
+  function gv(elId) { var el = document.getElementById(elId); return el ? el.value.trim() : ''; }
+  var marketLabelTxt = gv('peE_marketLabel');
+  var parsedMarket = peParseMarket(marketLabelTxt);
+
+  var body = {
+    id: id,
+    home: gv('peE_home'),
+    away: gv('peE_away'),
+    league: gv('peE_league'),
+    setting: gv('peE_setting'),
+    market: parsedMarket.market,
+    market_side: parsedMarket.side,
+    market_line: parsedMarket.line,
+    market_label: parsedMarket.market ? parsedMarket.label : marketLabelTxt, // запазваме ръчния текст, ако не се разпознае
+    fair_price: gv('peE_fair') !== '' ? parseFloat(gv('peE_fair')) : null,
+    bet365_odds: gv('peE_odds') !== '' ? parseFloat(gv('peE_odds')) : null,
+    edge_pct: gv('peE_edge') !== '' ? parseFloat(gv('peE_edge')) : null,
+    implied_prob: gv('peE_implied') !== '' ? parseFloat(gv('peE_implied')) : null,
+    kickoff_txt: gv('peE_kickoff')
+  };
+
+  fetch('/api/pinnacle-edge', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(r){ return r.json(); }).then(function(data){
+    if (data && data.ok) {
+      if (typeof showToast === 'function') showToast('✅ Сигналът е обновен', 'success');
+      peCloseEdit();
+      peLoadLog();
+    } else if (typeof showToast === 'function') showToast('❌ Грешка при запис', 'error');
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+  });
+}
+
 function peLoadLog() {
   var wrap = document.getElementById('peTableWrap');
   if (!wrap) return;
@@ -12879,6 +12981,7 @@ function peLoadLog() {
       it.outcome = oc.outcome;
       it.profit = oc.profit;
     });
+    window.PE_LAST_ITEMS = items; // за бутона за редактиране
 
     // ── Попълваме dropdown-а с уникалните пазари, налични в данните ──
     var sel = document.getElementById('peAnalysisMarketFilter');
@@ -12945,7 +13048,7 @@ function peLoadLog() {
         '<td style="padding:.35rem"><input id="peCornA_' + it.id + '" type="number" step="1" value="' + (it.final_corners_away!=null?it.final_corners_away:'') + '" style="width:36px;font-size:.6rem;padding:2px' + (isCorners?';border-color:#a78bfa':'') + '" onchange="peSaveResult(\'' + it.id + '\')"></td>' +
         '<td style="padding:.35rem;color:' + (outcomeColor[it.outcome]||'var(--dim)') + ';font-weight:700">' + it.outcome + '</td>' +
         '<td style="padding:.35rem;color:' + (it.profit>0?'var(--grn)':it.profit<0?'var(--red)':'var(--dim)') + '">' + (it.profit!=null ? (it.profit>=0?'+':'') + it.profit.toFixed(2) : '—') + '</td>' +
-        '<td style="padding:.35rem"><button class="btn btn-sec" style="font-size:.55rem;padding:2px 6px" onclick="peDeleteRow(\'' + it.id + '\')">🗑</button></td>' +
+        '<td style="padding:.35rem;white-space:nowrap"><button class="btn btn-sec" style="font-size:.55rem;padding:2px 6px" onclick="peOpenEdit(\'' + it.id + '\')">✏️</button> <button class="btn btn-sec" style="font-size:.55rem;padding:2px 6px" onclick="peDeleteRow(\'' + it.id + '\')">🗑</button></td>' +
       '</tr>';
     }).join('');
 

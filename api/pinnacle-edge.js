@@ -93,7 +93,13 @@ export default async function handler(req, res) {
     }
 
     if (req.method === "PUT") {
-      const { id, final_score_home, final_score_away, final_corners_home, final_corners_away } = req.body || {};
+      const {
+        id, final_score_home, final_score_away, final_corners_home, final_corners_away,
+        // ✅ Редактиране на основните полета на сигнала (не само резултата) —
+        // за бутона "✏️ Редактирай" в UI-то.
+        home, away, league, setting, market, market_side, market_line, market_label,
+        fair_price, bet365_odds, edge_pct, implied_prob, kickoff_txt,
+      } = req.body || {};
       if (!id) { res.status(400).json({ ok: false, error: "missing_id" }); return; }
 
       // ✅ ORDS връща HTTP 405 на PATCH за тези таблици — GET + пълен
@@ -109,6 +115,19 @@ export default async function handler(req, res) {
       if (final_score_away !== undefined) full.final_score_away = final_score_away;
       if (final_corners_home !== undefined) full.final_corners_home = final_corners_home;
       if (final_corners_away !== undefined) full.final_corners_away = final_corners_away;
+      if (home !== undefined) full.home = home;
+      if (away !== undefined) full.away = away;
+      if (league !== undefined) full.league = league;
+      if (setting !== undefined) full.setting = setting;
+      if (market !== undefined) full.market = market;
+      if (market_side !== undefined) full.market_side = market_side;
+      if (market_line !== undefined) full.market_line = market_line;
+      if (market_label !== undefined) full.market_label = market_label;
+      if (fair_price !== undefined) full.fair_price = fair_price;
+      if (bet365_odds !== undefined) full.bet365_odds = bet365_odds;
+      if (edge_pct !== undefined) full.edge_pct = edge_pct;
+      if (implied_prob !== undefined) full.implied_prob = implied_prob;
+      if (kickoff_txt !== undefined) full.kickoff_txt = kickoff_txt;
 
       const r = await oraFetch(`/${TABLE}/${id}`, "PUT", full);
       if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
