@@ -38,10 +38,16 @@ export default async function handler(req, res) {
       // ✅ Дубликат защита — теглим съществуващите сигнали и пропускаме
       // редове, които вече присъстват (същия мач + пазар), вместо да
       // създаваме нов ред при всяко повторно качване на същия файл.
+      // ВАЖНО: за "Totals" пазар, Setting (Goals/Corners) СЪЩЕСТВЕНО
+      // променя залога (общо ГОЛОВЕ срещу общо КОРНЕРИ над/под същата
+      // линия — различни резултати!) — затова се включва в ключа. За
+      // "ML" пазар Setting е ирелевантно (краен победител си е един и
+      // същ, независимо от таг-а) — НЕ се включва, за да се дедуплицира
+      // правилно двойните ML записи, които OddAlerts понякога изпраща.
       const existingResp = await oraFetch(`/${TABLE}/?limit=500`, "GET");
       const existingItems = existingResp.json?.items || [];
       const dupKey = (r) =>
-        `${(r.home || "").trim().toLowerCase()}|${(r.away || "").trim().toLowerCase()}|${r.market_label || ""}`;
+        `${(r.home || "").trim().toLowerCase()}|${(r.away || "").trim().toLowerCase()}|${r.market_label || ""}|${r.market === "Totals" ? (r.setting || "") : ""}`;
       const existingKeys = new Set(existingItems.map(dupKey));
 
       let count = 0;

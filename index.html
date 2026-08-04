@@ -12164,6 +12164,19 @@ function peParseMarket(txt) {
 var PE_MONTHS = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
 function peParseKickoffDate(txt) {
   if (!txt) return null;
+
+  // ✅ "Today at HH:MM (BST)" / "Tomorrow at HH:MM (BST)" — най-честият
+  // формат в реални сигнали (48 от 54 в реален тест партида имаха точно
+  // този формат) — преди това изобщо не се разпознаваше.
+  var todayM = txt.match(/^(Today|Tomorrow)\s+at\s+(\d{1,2}):(\d{2})/i);
+  if (todayM) {
+    var base = new Date();
+    if (/tomorrow/i.test(todayM[1])) base.setUTCDate(base.getUTCDate() + 1);
+    var d0 = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate(),
+      parseInt(todayM[2],10), parseInt(todayM[3],10)));
+    if (!isNaN(d0.getTime())) return d0.toISOString();
+  }
+
   // ✅ Поддръжка и на "Sun 2nd Aug at 11:00 (BST)" стил — махаме ден от
   // седмицата, ordinal суфикси (2nd/3rd/21st), "at" и часовата зона,
   // за да паднем обратно на същия "DD Mon HH:MM" regex.
@@ -12426,7 +12439,10 @@ function peCleanDuplicates() {
     var items = (data && data.items) || [];
     var groups = {};
     items.forEach(function(it){
-      var key = (it.home||'').trim().toLowerCase() + '|' + (it.away||'').trim().toLowerCase() + '|' + (it.market_label||'');
+      // ✅ За "Totals" пазар Setting (Goals/Corners) е част от идентичността
+      // на залога (различни резултати!) — само за "ML" се пропуска.
+      var settingPart = it.market === 'Totals' ? (it.setting||'') : '';
+      var key = (it.home||'').trim().toLowerCase() + '|' + (it.away||'').trim().toLowerCase() + '|' + (it.market_label||'') + '|' + settingPart;
       if (!groups[key]) groups[key] = [];
       groups[key].push(it);
     });
