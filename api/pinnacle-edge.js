@@ -134,6 +134,38 @@ export default async function handler(req, res) {
 
       const r = await oraFetch(`/${TABLE}/${id}`, "PUT", full);
       if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
+
+      // ✅ Верификация след запис — Oracle/ORDS може ТИХО да игнорира
+      // поле, което не съществува като реална колона (не хвърля грешка,
+      // просто не го запазва). Прочитаме обратно и сравняваме, за да
+      // хванем точно този клас "тиха загуба на данни" вместо да
+      // отговорим ok:true, докато нещо реално не се е записало.
+      const verify = await oraFetch(`/${TABLE}/${id}`, "GET");
+      const saved = verify.json || {};
+      const changedFields = {
+        final_score_home, final_score_away, final_corners_home, final_corners_away,
+        home, away, league, setting, market, market_side, market_line, market_label,
+        fair_price, bet365_odds, edge_pct, implied_prob, kickoff_txt,
+      };
+      const mismatches = [];
+      for (const [key, sentVal] of Object.entries(changedFields)) {
+        if (sentVal === undefined) continue;
+        const savedVal = saved[key];
+        // ✅ Хлабаво сравнение (== вместо ===) — Oracle може да върне
+        // число като string или обратно, това не е реална разлика.
+        // eslint-disable-next-line eqeqeq
+        if (sentVal != savedVal && !(sentVal == null && savedVal == null)) {
+          mismatches.push(`${key}: изпратено=${JSON.stringify(sentVal)}, записано=${JSON.stringify(savedVal)}`);
+        }
+      }
+      if (mismatches.length) {
+        res.status(200).json({
+          ok: false,
+          error: `Полета не се записаха коректно (вероятно липсваща/грешна Oracle колона): ${mismatches.join(" | ")}`,
+        });
+        return;
+      }
+
       res.status(200).json({ ok: true });
       return;
     }

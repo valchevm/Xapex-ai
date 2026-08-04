@@ -12675,8 +12675,11 @@ function peSaveResult(id) {
     body: JSON.stringify(body)
   }).then(function(r){ return r.json(); }).then(function(data){
     if (data && data.ok) peLoadLog();
-    else if (typeof showToast === 'function') showToast('❌ Грешка при запис на резултат', 'error');
-  }).catch(function(e){ console.warn('[peSaveResult]', e.message); });
+    else if (typeof showToast === 'function') showToast('❌ ' + ((data&&data.error)||'Грешка при запис на резултат'), 'error');
+  }).catch(function(e){
+    if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+    console.warn('[peSaveResult]', e.message);
+  });
 }
 
 function peRenderAnalysis(items, marketLabel) {
@@ -12935,7 +12938,7 @@ function peImportResultsCsv(event) {
           byKey[key].push(it);
         });
 
-        var matched = 0, notFound = 0, updateErrors = 0, ambiguous = 0;
+        var matched = 0, notFound = 0, updateErrors = 0, ambiguous = 0, firstErrorMsg = null;
         var matchedIds = {};
         for (var ri = 0; ri < fileRows.length; ri++) {
           var fr = fileRows[ri];
@@ -12967,8 +12970,9 @@ function peImportResultsCsv(event) {
               if (fr.homeCorners != null) body.final_corners_home = fr.homeCorners;
               if (fr.awayCorners != null) body.final_corners_away = fr.awayCorners;
               var r = await fetch('/api/pinnacle-edge', { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) }).then(function(x){return x.json();});
-              if (r && r.ok) { matched++; matchedIds[found[fi].id] = true; } else updateErrors++;
-            } catch(err) { updateErrors++; }
+              if (r && r.ok) { matched++; matchedIds[found[fi].id] = true; }
+              else { updateErrors++; if (!firstErrorMsg) firstErrorMsg = (r && r.error) || 'непозната грешка'; }
+            } catch(err) { updateErrors++; if (!firstErrorMsg) firstErrorMsg = err.message; }
           }
         }
 
@@ -12982,6 +12986,9 @@ function peImportResultsCsv(event) {
           (notFound ? ' · ' + notFound + ' мача от файла без чакащ сигнал' : '') +
           (ambiguous ? ' · <span style="color:var(--yel)">' + ambiguous + ' нееднозначни (същия чифт отбори среща се повече от веднъж — само първото съвпадение приложено)</span>' : '') +
           (updateErrors ? ' · <span style="color:#f87171">' + updateErrors + ' грешки</span>' : '');
+        if (firstErrorMsg) {
+          summary += '<div style="margin-top:.4rem;color:#f87171;font-size:.56rem">Пример за грешка: ' + escHtml(firstErrorMsg) + '</div>';
+        }
         if (unmatchedSignals.length) {
           summary += '<div style="margin-top:.4rem;color:var(--yel)">⚠ ' + unmatchedSignals.length + ' чакащи сигнала НЕ намериха съвпадение в този файл:</div>' +
             '<div style="max-height:150px;overflow-y:auto;margin-top:.2rem">' +
