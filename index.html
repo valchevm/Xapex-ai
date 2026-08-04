@@ -12609,7 +12609,7 @@ function peCleanDuplicates() {
         } catch(e) { errs.push(e.message); }
       }
       var msg = '🧹 Изтрити ' + deleted + '/' + toDelete.length + ' дубликата';
-      if (errs.length) msg += ' · грешки: ' + errs.slice(0,2).join(', ');
+      if (errs.length) { var uniqErrs = errs.filter(function(e,i){ return errs.indexOf(e)===i; }); msg += ' · грешки: ' + uniqErrs.slice(0,3).join(' | '); }
       if (typeof showToast === 'function') showToast(msg, errs.length ? 'error' : 'success');
       peLoadLog();
     });
@@ -12637,7 +12637,7 @@ function peDeleteAllPending() {
         } catch(e) { errs.push(e.message); }
       }
       var msg = '🗑 Изтрити ' + deleted + '/' + pending.length + ' чакащи сигнала';
-      if (errs.length) msg += ' · грешки: ' + errs.slice(0,2).join(', ');
+      if (errs.length) { var uniqErrs = errs.filter(function(e,i){ return errs.indexOf(e)===i; }); msg += ' · грешки: ' + uniqErrs.slice(0,3).join(' | '); }
       if (typeof showToast === 'function') showToast(msg, errs.length ? 'error' : 'success');
       peLoadLog();
     });

@@ -11,11 +11,12 @@ const TABLE = "xgpro_pinnacle_edge";
 
 async function oraFetch(path, method, body) {
   const url = ORACLE_BASE + path;
-  const res = await fetch(url, {
-    method: method || "GET",
-    headers: { "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const opts = { method: method || "GET" };
+  if (body) {
+    opts.headers = { "Content-Type": "application/json" };
+    opts.body = JSON.stringify(body);
+  }
+  const res = await fetch(url, opts);
   const text = await res.text().catch(() => "");
   let json = null;
   try { json = text ? JSON.parse(text) : null; } catch (e) {}
@@ -141,7 +142,7 @@ export default async function handler(req, res) {
       const { id } = req.body || {};
       if (!id) { res.status(400).json({ ok: false, error: "missing_id" }); return; }
       const r = await oraFetch(`/${TABLE}/${id}`, "DELETE");
-      if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}` }); return; }
+      if (!r.ok) { res.status(200).json({ ok: false, error: `HTTP ${r.status}: ${r.text.slice(0, 200)}` }); return; }
       res.status(200).json({ ok: true });
       return;
     }
