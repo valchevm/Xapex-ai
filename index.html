@@ -3841,6 +3841,14 @@ input::placeholder, textarea::placeholder {
 
     <div id="pePreview"></div>
 
+    <!-- ── Игнорирай Setting за Totals/Spread (винаги голове) — за
+         случаи когато OddAlerts маркира Setting: Corners грешно на
+         сигнали, които реално са за голове/хендикап/победител. ── -->
+    <div style="display:flex;align-items:center;gap:.4rem;margin-top:.7rem;margin-bottom:.3rem;background:rgba(250,204,21,.06);border:1px solid rgba(250,204,21,.25);border-radius:7px;padding:.5rem .6rem">
+      <input type="checkbox" id="peIgnoreSetting" onchange="peSaveIgnoreSettingPref()" style="width:14px;height:14px">
+      <label for="peIgnoreSetting" style="font-size:.6rem;color:var(--txt);cursor:pointer">Игнорирай Setting (Corners/Goals) — всичко голове/Хендикап/победител, освен изрично "Corners Totals/Spread" в текста</label>
+    </div>
+
     <!-- ── Анализ панел ── -->
     <div style="display:flex;align-items:center;gap:.4rem;margin-top:.9rem;margin-bottom:.5rem">
       <span style="font-size:.62rem;color:var(--dim)">Пазар:</span>
@@ -12141,7 +12149,24 @@ function peToggle() {
   var shown = p.style.display !== 'none';
   p.style.display = shown ? 'none' : 'block';
   a.textContent   = shown ? '▶' : '▼';
-  if (!shown) peLoadLog();
+  if (!shown) {
+    peLoadIgnoreSettingPref();
+    peLoadLog();
+  }
+}
+
+// ── Настройка "Игнорирай Setting" — пази се в localStorage, за да
+// остане включена между сесиите докато потребителят я изключи ръчно. ──
+function peLoadIgnoreSettingPref() {
+  var cb = document.getElementById('peIgnoreSetting');
+  if (!cb) return;
+  try { cb.checked = localStorage.getItem('pe_ignore_setting') === '1'; } catch(e) {}
+}
+function peSaveIgnoreSettingPref() {
+  var cb = document.getElementById('peIgnoreSetting');
+  if (!cb) return;
+  try { localStorage.setItem('pe_ignore_setting', cb.checked ? '1' : '0'); } catch(e) {}
+  peLoadLog(); // веднага преизчисляваме таблицата/анализа с новата настройка
 }
 
 // ── Парсва пазар текста ("ML - Home", "Totals - Over (2.5)" и т.н.) ──
@@ -12386,8 +12411,13 @@ function peComputeOutcome(sig) {
   // "Draw No Bet", "Both Teams To Score", "Team Total" пазари ВИНАГИ
   // се гледат ГОЛОВЕ — тези пазари по дефиниция са за краен резултат,
   // не за корнери, независимо какво казва Setting.
+  // ✅ Ако потребителят е включил "Игнорирай Setting" (OddAlerts понякога
+  // маркира Setting: Corners грешно на сигнали, които реално са за
+  // голове) — Setting изобщо не участва, само изричния market_force_corners
+  // флаг (буквален "Corners Totals/Spread" текст в пазара) продължава да важи.
+  var ignoreSetting = (typeof localStorage !== 'undefined') && localStorage.getItem('pe_ignore_setting') === '1';
   var useCorners = !!sig.market_force_corners ||
-    ((sig.market === 'Totals' || sig.market === 'Spread') && sig.setting === 'Corners');
+    (!ignoreSetting && (sig.market === 'Totals' || sig.market === 'Spread') && sig.setting === 'Corners');
   if (sig.market === 'ML' || sig.market === 'DNB' || sig.market === 'BTTS' || sig.market === 'TeamTotal') {
     useCorners = false;
   }
