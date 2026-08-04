@@ -12403,6 +12403,50 @@ function peComputeOutcome(sig) {
 
 // ── Споделена логика за всички разрешими пазари — голове или корнери,
 // подадени вече от peComputeOutcome спрямо useCorners. ──
+// ── Разделя четвъртинкова линия (.25/.75) на две съседни половинкови
+// линии за Asian Handicap style resolution. Връща [line] непроменена
+// ако вече е цяла или половинкова (.0/.5). Потвърдено срещу
+// референтна Asian Handicap таблица. ──
+function peSplitQuarterLine(line) {
+  var scaled = Math.round(line * 4);
+  if (scaled % 2 === 0) return [line]; // .0 или .5 — без разделяне
+  var lower = Math.floor(line * 2) / 2;
+  var upper = Math.ceil(line * 2) / 2;
+  return [lower, upper];
+}
+
+// ── Резултат за ЕДНА линия — value е margin (Spread) или total (Totals),
+// direction 'over' означава "искаме value > line", 'under' обратното. ──
+function peSingleLineResult(value, line, direction) {
+  if (direction === 'over') {
+    if (value > line) return 'WIN';
+    if (value === line) return 'PUSH';
+    return 'LOSE';
+  }
+  if (value < line) return 'WIN';
+  if (value === line) return 'PUSH';
+  return 'LOSE';
+}
+
+// ── Прилага (евентуално разделена) линия и връща крайния профит,
+// осреднен през половинките при четвъртинкова линия. outcome label
+// отразява НЕТНИЯ резултат (WIN ако нетна печалба, PUSH ако точно 0,
+// LOSE ако нетна загуба) — профитът остава точен дори при
+// "1/2 печели 1/2 се връща" сценарии. ──
+function peResolveLineMarket(value, line, direction, odds) {
+  var lines = peSplitQuarterLine(line);
+  var stake = 1 / lines.length; // всяка половинка носи половин залог
+  var totalProfit = 0;
+  lines.forEach(function(ln){
+    var r = peSingleLineResult(value, ln, direction);
+    if (r === 'WIN') totalProfit += stake * (odds - 1);
+    else if (r === 'LOSE') totalProfit -= stake;
+    // PUSH -> 0, нищо не се добавя
+  });
+  var outcome = totalProfit > 0 ? 'WIN' : (totalProfit < 0 ? 'LOSE' : 'PUSH');
+  return { outcome: outcome, profit: totalProfit };
+}
+
 function peResolveTotalsOrML(sig, h, a) {
   var outcome;
   if (sig.market === 'ML' && sig.market_side === 'Home') {
@@ -12418,27 +12462,24 @@ function peResolveTotalsOrML(sig, h, a) {
   } else if (sig.market === 'BTTS' && sig.market_side === 'No') {
     outcome = (h === 0 || a === 0) ? 'WIN' : 'LOSE';
   } else if (sig.market === 'TeamTotal' && sig.market_side === 'HomeOver') {
-    outcome = h > sig.market_line ? 'WIN' : (h === sig.market_line ? 'PUSH' : 'LOSE');
+    return peResolveLineMarket(h, sig.market_line, 'over', sig.bet365_odds);
   } else if (sig.market === 'TeamTotal' && sig.market_side === 'HomeUnder') {
-    outcome = h < sig.market_line ? 'WIN' : (h === sig.market_line ? 'PUSH' : 'LOSE');
+    return peResolveLineMarket(h, sig.market_line, 'under', sig.bet365_odds);
   } else if (sig.market === 'TeamTotal' && sig.market_side === 'AwayOver') {
-    outcome = a > sig.market_line ? 'WIN' : (a === sig.market_line ? 'PUSH' : 'LOSE');
+    return peResolveLineMarket(a, sig.market_line, 'over', sig.bet365_odds);
   } else if (sig.market === 'TeamTotal' && sig.market_side === 'AwayUnder') {
-    outcome = a < sig.market_line ? 'WIN' : (a === sig.market_line ? 'PUSH' : 'LOSE');
+    return peResolveLineMarket(a, sig.market_line, 'under', sig.bet365_odds);
   } else if (sig.market === 'Totals' && sig.market_side === 'Over') {
-    var total = h + a;
-    outcome = total > sig.market_line ? 'WIN' : (total === sig.market_line ? 'PUSH' : 'LOSE');
+    return peResolveLineMarket(h + a, sig.market_line, 'over', sig.bet365_odds);
   } else if (sig.market === 'Totals' && sig.market_side === 'Under') {
-    var total2 = h + a;
-    outcome = total2 < sig.market_line ? 'WIN' : (total2 === sig.market_line ? 'PUSH' : 'LOSE');
+    return peResolveLineMarket(h + a, sig.market_line, 'under', sig.bet365_odds);
   } else if (sig.market === 'Spread' && sig.market_side === 'Home') {
-    // ── "Spread - Home (+X)" — домакинът получава X голова преднина
-    // (X може да е и отрицателно, ако е фаворит и дава преднина). ──
-    var adjH = h + sig.market_line;
-    outcome = adjH > a ? 'WIN' : (adjH === a ? 'PUSH' : 'LOSE');
+    // ── "Spread - Home (+X)" — margin = h - a, приложена линия X.
+    // ✅ Потвърдено срещу референтна Asian Handicap таблица включително
+    // четвъртинкови линии (.25/.75) — разделяне на половин залог. ──
+    return peResolveLineMarket(h - a, -sig.market_line, 'over', sig.bet365_odds);
   } else if (sig.market === 'Spread' && sig.market_side === 'Away') {
-    var adjA = a + sig.market_line;
-    outcome = adjA > h ? 'WIN' : (adjA === h ? 'PUSH' : 'LOSE');
+    return peResolveLineMarket(a - h, -sig.market_line, 'over', sig.bet365_odds);
   } else {
     return { outcome: 'PENDING', profit: null };
   }
@@ -12499,9 +12540,28 @@ function peSaveAllPending() {
 
 // ── Сканира за дубликати (същия мач + пазар) и трие излишните,
 // запазвайки записа с най-много попълнени резултатни данни. ──
+// ── In-app потвърждение вместо native confirm() — браузърите понякога
+// тихо блокират повтарящи се confirm() диалози (checkbox "Prevent this
+// page from creating additional dialogs"), карайки бутона да изглежда
+// сякаш "нищо не се случва". Този панел винаги се вижда. ──
+function peConfirmAction(message, onYes) {
+  var panel = document.getElementById('peEditPanel');
+  if (!panel) { onYes(); return; } // fallback ако панела липсва
+  panel.innerHTML =
+    '<div style="background:#0a1429;border:1px solid rgba(248,113,113,.4);border-radius:9px;padding:.7rem;margin-bottom:.8rem">' +
+      '<div style="font-size:.64rem;color:var(--txt);margin-bottom:.6rem">' + message + '</div>' +
+      '<div style="display:flex;gap:.5rem">' +
+        '<button class="btn" style="flex:1;width:auto;margin-top:0;background:#f87171;color:#fff" id="peConfirmYesBtn">Да, изтрий</button>' +
+        '<button class="btn btn-sec" style="flex:0 0 auto;width:auto;margin-top:0" onclick="peCloseEdit()">Откажи</button>' +
+      '</div>' +
+    '</div>';
+  panel.style.display = 'block';
+  panel.scrollIntoView({behavior:'smooth', block:'nearest'});
+  document.getElementById('peConfirmYesBtn').onclick = function(){ peCloseEdit(); onYes(); };
+}
+
 function peCleanDuplicates() {
-  if (!confirm('Сканирай и изтрий дублиращите се сигнали (същия мач + пазар)?')) return;
-  fetch('/api/pinnacle-edge').then(function(r){ return r.json(); }).then(async function(data){
+  fetch('/api/pinnacle-edge').then(function(r){ return r.json(); }).then(function(data){
     var items = (data && data.items) || [];
     var groups = {};
     items.forEach(function(it){
@@ -12540,15 +12600,19 @@ function peCleanDuplicates() {
       return;
     }
 
-    var deleted = 0;
-    for (var i = 0; i < toDelete.length; i++) {
-      try {
-        var r = await fetch('/api/pinnacle-edge', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: toDelete[i]}) }).then(function(x){return x.json();});
-        if (r && r.ok) deleted++;
-      } catch(e) {}
-    }
-    if (typeof showToast === 'function') showToast('🧹 Изтрити ' + deleted + ' дубликата', 'success');
-    peLoadLog();
+    peConfirmAction('Сканирах и намерих <b>' + toDelete.length + '</b> дублиращи се сигнала. Изтрий ли ги?', async function(){
+      var deleted = 0, errs = [];
+      for (var i = 0; i < toDelete.length; i++) {
+        try {
+          var r = await fetch('/api/pinnacle-edge', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: toDelete[i]}) }).then(function(x){return x.json();});
+          if (r && r.ok) deleted++; else errs.push((r&&r.error)||'?');
+        } catch(e) { errs.push(e.message); }
+      }
+      var msg = '🧹 Изтрити ' + deleted + '/' + toDelete.length + ' дубликата';
+      if (errs.length) msg += ' · грешки: ' + errs.slice(0,2).join(', ');
+      if (typeof showToast === 'function') showToast(msg, errs.length ? 'error' : 'success');
+      peLoadLog();
+    });
   }).catch(function(e){
     if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
   });
@@ -12556,7 +12620,7 @@ function peCleanDuplicates() {
 
 // ── Изтрива ВСИЧКИ чакащи (PENDING) сигнали наведнъж ──
 function peDeleteAllPending() {
-  fetch('/api/pinnacle-edge').then(function(r){ return r.json(); }).then(async function(data){
+  fetch('/api/pinnacle-edge').then(function(r){ return r.json(); }).then(function(data){
     var items = (data && data.items) || [];
     items.forEach(function(it){ it.outcome = peComputeOutcome(it).outcome; });
     var pending = items.filter(function(it){ return it.outcome === 'PENDING'; });
@@ -12564,31 +12628,37 @@ function peDeleteAllPending() {
       if (typeof showToast === 'function') showToast('Няма pending сигнали за изтриване', 'info');
       return;
     }
-    if (!confirm('Изтрий всички ' + pending.length + ' чакащи (PENDING) сигнала? Не може да се отмени.')) return;
-
-    var deleted = 0;
-    for (var i = 0; i < pending.length; i++) {
-      try {
-        var r = await fetch('/api/pinnacle-edge', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: pending[i].id}) }).then(function(x){return x.json();});
-        if (r && r.ok) deleted++;
-      } catch(e) {}
-    }
-    if (typeof showToast === 'function') showToast('🗑 Изтрити ' + deleted + ' чакащи сигнала', 'success');
-    peLoadLog();
+    peConfirmAction('Изтрий всички <b>' + pending.length + '</b> чакащи (PENDING) сигнала? Не може да се отмени.', async function(){
+      var deleted = 0, errs = [];
+      for (var i = 0; i < pending.length; i++) {
+        try {
+          var r = await fetch('/api/pinnacle-edge', { method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({id: pending[i].id}) }).then(function(x){return x.json();});
+          if (r && r.ok) deleted++; else errs.push((r&&r.error)||'?');
+        } catch(e) { errs.push(e.message); }
+      }
+      var msg = '🗑 Изтрити ' + deleted + '/' + pending.length + ' чакащи сигнала';
+      if (errs.length) msg += ' · грешки: ' + errs.slice(0,2).join(', ');
+      if (typeof showToast === 'function') showToast(msg, errs.length ? 'error' : 'success');
+      peLoadLog();
+    });
   }).catch(function(e){
     if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
   });
 }
 
 function peDeleteRow(id) {
-  if (!confirm('Изтрий този сигнал?')) return;
-  fetch('/api/pinnacle-edge', {
-    method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: id })
-  }).then(function(r){ return r.json(); }).then(function(data){
-    if (data && data.ok) { peLoadLog(); }
-    else if (typeof showToast === 'function') showToast('❌ Грешка при изтриване', 'error');
-  }).catch(function(e){ console.warn('[peDeleteRow]', e.message); });
+  peConfirmAction('Изтрий този сигнал?', function(){
+    fetch('/api/pinnacle-edge', {
+      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: id })
+    }).then(function(r){ return r.json(); }).then(function(data){
+      if (data && data.ok) { peLoadLog(); }
+      else if (typeof showToast === 'function') showToast('❌ Грешка при изтриване: ' + ((data&&data.error)||'непозната'), 'error');
+    }).catch(function(e){
+      if (typeof showToast === 'function') showToast('❌ ' + e.message, 'error');
+      console.warn('[peDeleteRow]', e.message);
+    });
+  });
 }
 
 function peSaveResult(id) {
