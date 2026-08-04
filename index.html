@@ -3841,12 +3841,13 @@ input::placeholder, textarea::placeholder {
 
     <div id="pePreview"></div>
 
-    <!-- ── Игнорирай Setting за Totals/Spread (винаги голове) — за
-         случаи когато OddAlerts маркира Setting: Corners грешно на
-         сигнали, които реално са за голове/хендикап/победител. ── -->
-    <div style="display:flex;align-items:center;gap:.4rem;margin-top:.7rem;margin-bottom:.3rem;background:rgba(250,204,21,.06);border:1px solid rgba(250,204,21,.25);border-radius:7px;padding:.5rem .6rem">
-      <input type="checkbox" id="peIgnoreSetting" onchange="peSaveIgnoreSettingPref()" style="width:14px;height:14px">
-      <label for="peIgnoreSetting" style="font-size:.6rem;color:var(--txt);cursor:pointer">Игнорирай Setting (Corners/Goals) — всичко голове/Хендикап/победител, освен изрично "Corners Totals/Spread" в текста</label>
+    <!-- ── ✅ "Setting: Goals/Corners" е само име на филтър в OddAlerts
+         акаунта — НЕ определя дали залогът е за голове или корнери.
+         Само пазарният текст (реда с 📊) решава: съдържа ли буквално
+         думата "Corners" (напр. "Corners Totals/Spread") — иначе е
+         винаги за голове. Постоянно поведение, не е нужен превключвател. ── -->
+    <div style="font-size:.56rem;color:var(--dim);margin-top:.7rem;margin-bottom:.3rem;padding:.4rem .6rem">
+      ℹ️ Setting (Goals/Corners) не влияе на изчислението — само пазарният текст решава голове/корнери.
     </div>
 
     <!-- ── Анализ панел ── -->
@@ -12150,7 +12151,6 @@ function peToggle() {
   p.style.display = shown ? 'none' : 'block';
   a.textContent   = shown ? '▶' : '▼';
   if (!shown) {
-    peLoadIgnoreSettingPref();
     peLoadLog();
   }
 }
@@ -12405,22 +12405,14 @@ function peComputeOutcome(sig) {
   // (HT резултат / картони / player статистика — не се пазят).
   if (sig.market === 'Unsupported') return { outcome: 'PENDING', profit: null };
 
-  // ✅ КРИТИЧЕН ФИКС: "Setting: Goals/Corners" НЕ определя пазара —
-  // определя го market_label. Setting има значение САМО за "Totals"/
-  // "Spread" пазар (дали линията е за голове или корнери). За "ML",
-  // "Draw No Bet", "Both Teams To Score", "Team Total" пазари ВИНАГИ
-  // се гледат ГОЛОВЕ — тези пазари по дефиниция са за краен резултат,
-  // не за корнери, независимо какво казва Setting.
-  // ✅ Ако потребителят е включил "Игнорирай Setting" (OddAlerts понякога
-  // маркира Setting: Corners грешно на сигнали, които реално са за
-  // голове) — Setting изобщо не участва, само изричния market_force_corners
-  // флаг (буквален "Corners Totals/Spread" текст в пазара) продължава да важи.
-  var ignoreSetting = (typeof localStorage !== 'undefined') && localStorage.getItem('pe_ignore_setting') === '1';
-  var useCorners = !!sig.market_force_corners ||
-    (!ignoreSetting && (sig.market === 'Totals' || sig.market === 'Spread') && sig.setting === 'Corners');
-  if (sig.market === 'ML' || sig.market === 'DNB' || sig.market === 'BTTS' || sig.market === 'TeamTotal') {
-    useCorners = false;
-  }
+  // ✅ ОКОНЧАТЕЛЕН ФИКС: "Setting: Goals/Corners" е просто ИМЕ на филтър/
+  // настройка в OddAlerts акаунта на потребителя — НЯМА нищо общо с
+  // това дали залогът е за голове или корнери. Само пазарният ТЕКСТ
+  // (market_label, редът с 📊) определя това: ако буквално съдържа
+  // думата "Corners" (напр. "Corners Totals", "Corners Spread") — за
+  // корнери е; иначе ВИНАГИ е за голове, независимо какво казва Setting.
+  // Setting никога повече не се чете тук.
+  var useCorners = !!sig.market_force_corners;
 
   var h, a;
   if (useCorners) { h = sig.final_corners_home; a = sig.final_corners_away; }
