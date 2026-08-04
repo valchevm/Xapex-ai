@@ -13393,13 +13393,24 @@ function peLoadLog() {
     var outcomeColor = PE_OUTCOME_COLORS;
 
     function peFormatKickoffStacked(it) {
-      if (it.kickoff_date_iso) {
-        var d = new Date(it.kickoff_date_iso);
+      // ✅ Ако няма запазена kickoff_date_iso (стари сигнали, записани
+      // преди фикса за "Today at HH:MM"/"Fri 14th Aug" формати) —
+      // пробваме да я разпознаем "на живо" от суровия текст сега,
+      // вместо да показваме дългия ред нецепнат.
+      var isoStr = it.kickoff_date_iso || (it.kickoff_txt ? peParseKickoffDate(it.kickoff_txt) : null);
+      if (isoStr) {
+        var d = new Date(isoStr);
         if (!isNaN(d.getTime())) {
           var dateStr = fxFormatMatchDate ? fxFormatMatchDate(d.toISOString().slice(0,10)) : d.toISOString().slice(0,10);
           var timeStr = String(d.getUTCHours()).padStart(2,'0') + ':' + String(d.getUTCMinutes()).padStart(2,'0');
           return '<div style="line-height:1.2;white-space:nowrap">' + dateStr + '</div><div style="color:var(--dim);line-height:1.2">' + timeStr + '</div>';
         }
+      }
+      // ✅ Дори без пълен date parse — поне разделяме "Fri 14th Aug" от
+      // "19:30 (BST)" по думата "at", за да не е един дълъг ред.
+      var atSplit = (it.kickoff_txt||'').match(/^(.+?)\s+at\s+(.+)$/i);
+      if (atSplit) {
+        return '<div style="line-height:1.2;white-space:nowrap">' + escHtml(atSplit[1]) + '</div><div style="color:var(--dim);line-height:1.2">' + escHtml(atSplit[2]) + '</div>';
       }
       return '<div style="white-space:nowrap">' + escHtml(it.kickoff_txt||'—') + '</div>';
     }
