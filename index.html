@@ -3141,6 +3141,16 @@ input::placeholder, textarea::placeholder {
       <div id="fxPublishBetProResult" style="margin-top:.5rem;font-size:.58rem;color:var(--dim)"></div>
     </div>
 
+    <!-- ── Пълен CSV експорт — всички данни за всеки мач ── -->
+    <div style="background:#07101f;border:1px solid rgba(74,222,128,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
+      <div style="font-size:.68rem;color:#4ade80;font-weight:600;margin-bottom:.4rem">⬇️ Пълен CSV експорт</div>
+      <div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem;line-height:1.5">
+        Изтегля отбори, дати, OA вероятности, Bet365 и Pinnacle коефициенти, и прогнозата на моя модел за всеки мач. Липсващи данни остават празни клетки.
+      </div>
+      <button onclick="fxExportFullCsv()" class="btn btn-p" style="width:100%;font-size:.63rem;padding:.5rem">⬇️ Изтегли всички мачове (CSV)</button>
+      <div id="fxExportFullCsvResult" style="margin-top:.5rem;font-size:.58rem;color:var(--dim)"></div>
+    </div>
+
     <!-- ── Проследяване на резултати (маркирай → въведи резултат → анализ) ── -->
     <div style="background:#07101f;border:1px solid rgba(74,222,128,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
       <div style="font-size:.68rem;color:#4ade80;font-weight:600;margin-bottom:.5rem">📈 Проследяване на резултати</div>
@@ -26745,6 +26755,74 @@ async function fxPublishBetProManual(mode) {
   }
 }
 
+// ── Пълен CSV експорт на всички мачове от Fixtures — отбори, дати,
+// OA/Bet365/Pinnacle коефициенти и вероятности, прогноза от модела. ──
+function fxCsvCell(v) {
+  if (v == null || v === '') return '';
+  var s = String(v);
+  if (s.indexOf(',') !== -1 || s.indexOf('"') !== -1 || s.indexOf('\n') !== -1) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function fxExportFullCsv() {
+  var resEl = document.getElementById('fxExportFullCsvResult');
+  var rows = [];
+  Object.keys(FX_PASTED).forEach(function(country){
+    (FX_PASTED[country] || []).forEach(function(m){
+      rows.push({ country: country, m: m });
+    });
+  });
+
+  if (!rows.length) {
+    if (resEl) resEl.textContent = '⚠ Няма заредени мачове за експорт';
+    return;
+  }
+
+  var headers = [
+    'Държава','Лига','Отбор домакин','Отбор гост','Дата','Час',
+    'OA Домакин%','OA Равен%','OA Гост%','OA Над2.5%','OA BTTS%',
+    'Bet365 1','Bet365 X','Bet365 2','Bet365 Над2.5','Bet365 Под2.5','Bet365 BTTS',
+    'Pinnacle 1','Pinnacle X','Pinnacle 2','Pinnacle Над2.5','Pinnacle Под2.5','Pinnacle BTTS',
+    'Модел 1%','Модел X%','Модел 2%','Модел Над2.5%','Модел Под2.5%','Модел BTTS%',
+    'Модел източник', 'Резултат домакин','Резултат гост'
+  ];
+
+  var lines = [headers.join(',')];
+
+  rows.forEach(function(entry){
+    var m = entry.m;
+    var oa = m.oaProbs || {};
+    var b365 = m.odds || {};
+    var pin = m.pinnacleOdds || {};
+    var mp = m.modelProbs || {};
+    var row = [
+      entry.country, m.league, m.home, m.away, m.match_date, m.time,
+      oa.home, oa.draw, oa.away, oa.o25, oa.btts,
+      b365.home, b365.draw, b365.away, b365.over25, b365.under25, b365.btts,
+      pin.home, pin.draw, pin.away, pin.over25, pin.under25, pin.btts,
+      mp.p1, mp.pX, mp.p2, mp.pO25, mp.pU25, mp.pBTTS,
+      m.blendLabel || '',
+      (m.actualH != null ? m.actualH : ''), (m.actualA != null ? m.actualA : '')
+    ];
+    lines.push(row.map(fxCsvCell).join(','));
+  });
+
+  var csv = lines.join('\n');
+  var blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'xapex_fixtures_export_' + new Date().toISOString().slice(0,10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  if (resEl) resEl.textContent = '✅ Изтеглени ' + rows.length + ' мача';
+}
+
 async function cloudFxLoad() {
   _cloudFxIsLoading = true;
   try {
@@ -30674,6 +30752,9 @@ function fxImportFullCsv(event) {
         // ── FX_PASTED запис (списъчен изглед) ──
         if (!FX_PASTED[country]) FX_PASTED[country] = [];
         var existingIdx = FX_PASTED[country].findIndex(function(m){ return m.home === home && m.away === away; });
+        var pin1x2Row = mbk.market_1x2.find(function(r){ return r.bk === 'Pinnacle'; });
+        var pinOuRow  = mbk.market_ou25.find(function(r){ return r.bk === 'Pinnacle'; });
+        var pinBttsRow= mbk.market_btts.find(function(r){ return r.bk === 'Pinnacle'; });
         var fxMatch = {
           home: home, away: away, league: league,
           time: kickoffTime, pos: '', quality: 'good',
@@ -30684,6 +30765,14 @@ function fxImportFullCsv(event) {
           oaProbs: {
             home: fields.oa_home, draw: fields.oa_draw, away: fields.oa_away,
             o25: fields.oa_o25, btts: fields.oa_btts
+          },
+          // ✅ Pinnacle коефициенти директно на match обекта — за пълния
+          // CSV експорт от Fixtures, без нужда от достъп до IIFE-частния
+          // MW_STATE.
+          pinnacleOdds: {
+            home: pin1x2Row ? pin1x2Row.home : null, draw: pin1x2Row ? pin1x2Row.draw : null, away: pin1x2Row ? pin1x2Row.away : null,
+            over25: pinOuRow ? pinOuRow.over : null, under25: pinOuRow ? pinOuRow.under : null,
+            btts: pinBttsRow ? pinBttsRow.yes : null
           },
           _fullCsvImport: true
         };
