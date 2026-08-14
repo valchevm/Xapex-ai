@@ -28044,7 +28044,9 @@ function fxRenderSimResult(m, r) {
     '</div>';
 
   body.innerHTML = html;
-  document.getElementById('simModal').style.display = 'block';
+  var modalEl = document.getElementById('simModal');
+  if (typeof reparentModal === 'function') reparentModal(modalEl);
+  modalEl.style.display = 'block';
 }
 
 function fxCloseSimModal() {
@@ -29722,6 +29724,10 @@ function cGetISOWeek(d) {
       <div id="pasteStatsResult" style="display:none;margin-top:.6rem;font-size:.72rem;
         text-align:center;padding:.4rem;border-radius:6px"></div>
     </div>
+  </div><!-- ✅ ФИКС: затваря pasteStatsModal-a самата — липсваше, което
+              правеше oaProbsModal/simModal/editMatchModal/h2hModal
+              случайно вложени вътре в нея (невидими, докато pasteStatsModal
+              си стои display:none по подразбиране). -->
 
 <!-- ═══ OA PROBABILITIES MODAL ═══ -->
 <div id="oaProbsModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.88);
