@@ -2347,6 +2347,7 @@ function calibPanelHtml(m) {
         '<button class="btn btn-p" style="flex:1;min-width:100px;margin-top:0;padding:.4rem;font-size:.56rem" onclick="calibAutoOptimize(\'' + m.key + '\',\'profit\')">💰 Макс. Печалба</button>' +
         '<button class="btn btn-p" style="flex:1;min-width:100px;margin-top:0;padding:.4rem;font-size:.56rem" onclick="calibAutoOptimize(\'' + m.key + '\',\'roi\')">📈 Макс. ROI</button>' +
         '<button class="btn btn-p" style="flex:1;min-width:100px;margin-top:0;padding:.4rem;font-size:.56rem" onclick="calibAutoOptimize(\'' + m.key + '\',\'winrate\')">🎯 Макс. Успех</button>' +
+        '<button class="btn btn-sec" style="flex:1;min-width:100px;margin-top:0;padding:.4rem;font-size:.56rem;border-color:var(--pur);color:var(--pur)" onclick="calibAutoOptimize(\'' + m.key + '\',\'balanced\')">⚖️ Балансирано</button>' +
       '</div>' +
 
       '<div id="calibOut_' + m.key + '" style="font-size:.6rem;color:var(--dim)"></div>' +
@@ -2449,22 +2450,42 @@ function calibAutoOptimize(marketKey, mode) {
   var threshGrid = [0,5,8,10,12,15,18,20,25,30,35,40,50];
   var MIN_N = Math.max(30, Math.round(data.length*0.01)); // мин. 1% от мачовете или 30
 
-  var best = null;
+  var candidates = [];
   weightGrid.forEach(function(w){
     threshGrid.forEach(function(t){
       var r = calibComputeForWeight(marketKey, w, t);
-      if (r.n < MIN_N) return;
-      var score = mode==='profit' ? r.profit : mode==='roi' ? r.roi : r.wr;
-      if (!best || score > best.score) best = Object.assign({score:score}, r);
+      if (r.n >= MIN_N) candidates.push(r);
     });
   });
 
-  if (!best) { out.innerHTML = '⚠ Няма конфигурация с достатъчно залози (мин. ' + MIN_N + ')'; return; }
+  if (!candidates.length) { out.innerHTML = '⚠ Няма конфигурация с достатъчно залози (мин. ' + MIN_N + ')'; return; }
+
+  var best;
+  if (mode === 'balanced') {
+    // ✅ Балансирано — НЕ е просто повторение на друг критерий. Нормализираме
+    // ROI, успеваемост и печалба (min-max в рамките на всички валидни
+    // кандидати), после осредняваме — точката с най-добро СЪВКУПНО
+    // представяне по трите показателя едновременно, не екстремна по един.
+    var roiMin=Infinity, roiMax=-Infinity, wrMin=Infinity, wrMax=-Infinity, pMin=Infinity, pMax=-Infinity;
+    candidates.forEach(function(c){
+      if (c.roi<roiMin) roiMin=c.roi; if (c.roi>roiMax) roiMax=c.roi;
+      if (c.wr<wrMin) wrMin=c.wr; if (c.wr>wrMax) wrMax=c.wr;
+      if (c.profit<pMin) pMin=c.profit; if (c.profit>pMax) pMax=c.profit;
+    });
+    var norm = function(v,mn,mx){ return mx>mn ? (v-mn)/(mx-mn) : 0.5; };
+    candidates.forEach(function(c){
+      c.balScore = (norm(c.roi,roiMin,roiMax) + norm(c.wr,wrMin,wrMax) + norm(c.profit,pMin,pMax)) / 3;
+    });
+    best = candidates.reduce(function(a,b){ return b.balScore > a.balScore ? b : a; });
+  } else {
+    var metricFn = mode==='profit' ? function(c){return c.profit;} : mode==='roi' ? function(c){return c.roi;} : function(c){return c.wr;};
+    best = candidates.reduce(function(a,b){ return metricFn(b) > metricFn(a) ? b : a; });
+  }
 
   document.getElementById('calibW_' + marketKey).value = best.w;
   document.getElementById('calibT_' + marketKey).value = best.t;
   CALIB_RESULT_CACHE[marketKey] = best;
-  var modeLabels = {profit:'Максимална печалба', roi:'Максимален ROI', winrate:'Максимална успеваемост'};
+  var modeLabels = {profit:'Максимална печалба', roi:'Максимален ROI', winrate:'Максимална успеваемост', balanced:'Балансирано (ROI+успеваемост+печалба)'};
   calibRenderResult(marketKey, best, '🤖 Автоматично намерено — ' + modeLabels[mode]);
 }
 
@@ -2488,14 +2509,17 @@ function calibSaveAsModel(marketKey) {
   if (!r) return;
   var mCfg = CALIB_MARKETS.find(function(x){ return x.key===marketKey; });
   var oaWeight = 100 - r.w; // getOAWeight очаква OA% (не Pinnacle%)
+  // ✅ От калибрацията се пазят САМО теглата (OA срещу Pinnacle) — Value%
+  // прагът вече НЕ се запазва тук, а се прилага на живо като филтър във
+  // Fixtures (виж fxValueFilterMin), тъй като самият модел няма вграден
+  // Value концепт — той се търси другояче (директно от коефициентите).
   oaSaveWeightOverride(mCfg.oaKey, oaWeight, {
     n: r.n, source: 'calibration_v2',
     roiModel: r.roi.toFixed(2), roiModelN: r.n,
     srValueModel: r.wr.toFixed(1), srAllModel: r.wr.toFixed(1)
   });
-  saveValueThreshold(marketKey, r.t);
   var out = document.getElementById('calibOut_' + marketKey);
-  if (out) out.innerHTML += '<div style="color:var(--grn);font-size:.6rem;margin-top:.4rem">✅ Запазено — вече активно за всички бъдещи изчисления</div>';
+  if (out) out.innerHTML += '<div style="color:var(--grn);font-size:.6rem;margin-top:.4rem">✅ Тегло запазено — вече активно за всички бъдещи изчисления (Value% прага виж във Fixtures филтрите)</div>';
   updateCalibLastRun();
 }
 
@@ -3106,6 +3130,10 @@ if (document.readyState !== 'loading') calibRenderPanels();
           <option value="odds">По коефициент ↑</option>
           <option value="value">По value ↓</option>
         </select>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 2fr;gap:.4rem;margin-bottom:.4rem;align-items:center">
+        <input type="number" id="fxModelFilterMinValue" placeholder="Value% мин" step="1" style="padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid rgba(167,139,250,.4);border-radius:5px;font-size:.65rem;font-family:var(--mono)">
+        <span style="font-size:.56rem;color:var(--dim)">Показва само мачове с Value% ≥ въведеното (изчислено от избрания модел срещу Bet365 коефициента)</span>
       </div>
       <div style="display:flex;gap:.5rem">
         <button onclick="fxApplyModelFilter()" class="btn btn-p" style="flex:1;width:auto;margin-top:0;font-size:.65rem;padding:.5rem">✅ Приложи</button>
@@ -27162,9 +27190,11 @@ function fxApplyModelFilter() {
   var market = document.getElementById('fxModelFilterMarket').value;
   var minOdds = parseFloat(document.getElementById('fxModelFilterMinOdds').value);
   var maxOdds = parseFloat(document.getElementById('fxModelFilterMaxOdds').value);
+  var minValuePct = parseFloat(document.getElementById('fxModelFilterMinValue').value);
   var sortBy = document.getElementById('fxModelFilterSort').value;
   minOdds = isNaN(minOdds) ? null : minOdds;
   maxOdds = isNaN(maxOdds) ? null : maxOdds;
+  minValuePct = isNaN(minValuePct) ? null : minValuePct;
 
   var flat = [];
   Object.keys(FX_PASTED).forEach(function(country){
@@ -27183,6 +27213,11 @@ function fxApplyModelFilter() {
         if (maxOdds != null && (po.odd == null || po.odd > maxOdds)) return;
         entry.prob = po.prob; entry.odd = po.odd;
         entry.value = (po.odd != null) ? (po.prob/100 * po.odd - 1) : null;
+        // ✅ Value% филтър — изисква избран пазар (Value без пазар е
+        // недефинирано, тъй като различните изходи имат различен Value).
+        if (minValuePct != null) {
+          if (entry.value == null || entry.value*100 < minValuePct) return;
+        }
       }
       flat.push(entry);
     });
@@ -27223,6 +27258,7 @@ function fxClearModelFilter() {
   document.getElementById('fxModelFilterMarket').value = '';
   document.getElementById('fxModelFilterMinOdds').value = '';
   document.getElementById('fxModelFilterMaxOdds').value = '';
+  document.getElementById('fxModelFilterMinValue').value = '';
   document.getElementById('fxModelFilterSort').value = '';
   window.FX_MODEL_SORT_ACTIVE = false;
   // ✅ Пресъздаваме през общата функция — запазва датовия филтър, ако
