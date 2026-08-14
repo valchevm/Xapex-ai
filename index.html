@@ -2270,79 +2270,238 @@ input::placeholder, textarea::placeholder {
       Няма запазена калибрация — качи CSV файлове по-долу
     </div>
 
-    <!-- Upload зона -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:.5rem;margin-bottom:.7rem">
-      <!-- Home Win -->
-      <label style="background:#07101f;border:1px solid var(--bord);border-radius:8px;
-        padding:.5rem .7rem;cursor:pointer;display:block" id="calib_home_lbl">
-        <div style="font-size:.62rem;color:var(--acc);margin-bottom:2px">🏠 Home Win</div>
-        <div id="calib_home_txt" style="font-size:.65rem;color:var(--dim)">Избери CSV...</div>
-        <input type="file" accept=".csv" style="display:none" onchange="calibLoadFile('home',this)">
-      </label>
-      <!-- Draw -->
-      <label style="background:#07101f;border:1px solid var(--bord);border-radius:8px;
-        padding:.5rem .7rem;cursor:pointer;display:block" id="calib_draw_lbl">
-        <div style="font-size:.62rem;color:var(--yel);margin-bottom:2px">🤝 Draw</div>
-        <div id="calib_draw_txt" style="font-size:.65rem;color:var(--dim)">Избери CSV...</div>
-        <input type="file" accept=".csv" style="display:none" onchange="calibLoadFile('draw',this)">
-      </label>
-      <!-- Away Win -->
-      <label style="background:#07101f;border:1px solid var(--bord);border-radius:8px;
-        padding:.5rem .7rem;cursor:pointer;display:block" id="calib_away_lbl">
-        <div style="font-size:.62rem;color:var(--pur);margin-bottom:2px">✈️ Away Win</div>
-        <div id="calib_away_txt" style="font-size:.65rem;color:var(--dim)">Избери CSV...</div>
-        <input type="file" accept=".csv" style="display:none" onchange="calibLoadFile('away',this)">
-      </label>
-      <!-- Over 2.5 -->
-      <label style="background:#07101f;border:1px solid var(--bord);border-radius:8px;
-        padding:.5rem .7rem;cursor:pointer;display:block" id="calib_over_lbl">
-        <div style="font-size:.62rem;color:var(--grn);margin-bottom:2px">📈 Over 2.5</div>
-        <div id="calib_over_txt" style="font-size:.65rem;color:var(--dim)">Избери CSV...</div>
-        <input type="file" accept=".csv" style="display:none" onchange="calibLoadFile('over25',this)">
-      </label>
-      <!-- Under 2.5 -->
-      <label style="background:#07101f;border:1px solid var(--bord);border-radius:8px;
-        padding:.5rem .7rem;cursor:pointer;display:block" id="calib_under_lbl">
-        <div style="font-size:.62rem;color:var(--red);margin-bottom:2px">📉 Under 2.5</div>
-        <div id="calib_under_txt" style="font-size:.65rem;color:var(--dim)">Избери CSV...</div>
-        <input type="file" accept=".csv" style="display:none" onchange="calibLoadFile('under25',this)">
-      </label>
-      <!-- BTTS -->
-      <label style="background:#07101f;border:1px solid var(--bord);border-radius:8px;
-        padding:.5rem .7rem;cursor:pointer;display:block" id="calib_btts_lbl">
-        <div style="font-size:.62rem;color:var(--acc);margin-bottom:2px">⚽ BTTS Yes</div>
-        <div id="calib_btts_txt" style="font-size:.65rem;color:var(--dim)">Избери CSV...</div>
-        <input type="file" accept=".csv" style="display:none" onchange="calibLoadFile('btts',this)">
-      </label>
+    <div style="font-size:.6rem;color:var(--dim);background:#07101f;border-radius:7px;
+      padding:.5rem .7rem;margin-bottom:.8rem;line-height:1.6">
+      💡 За всеки пазар качи CSV файловете от OddAlerts (probability_export) — може да избереш <b>няколко файла наведнъж</b> (Bet365 + Pinnacle, разделени на части). Разпознава букмейкъра автоматично от "Bookmaker" колоната и ги обединява по ID на мача.
     </div>
 
-    <!-- Info -->
-    <div style="font-size:.63rem;color:var(--dim);background:#07101f;border-radius:7px;
-      padding:.5rem .7rem;margin-bottom:.7rem;line-height:1.6">
-      💡 Нужен е поне 1 файл за стартиране. Препоръчва се всички 6 за пълна калибрация.<br>
-      Калибрацията се запазва автоматично и се прилага при всяко изчисление.
-    </div>
+    <div id="calibMarketPanels"></div>
 
-    <!-- Бутони -->
-    <div class="btn-pair">
-      <button onclick="runCalibration()" id="calibRunBtn" class="btn btn-p btn-action">
-        ⚡ Стартирай калибрация
-      </button>
-      <button onclick="resetCalibration()" class="btn btn-del btn-del-icon" title="Нулирай">🗑</button>
-    </div>
+<script>
+// ═══════════════════════════════════════════════════════════════
+// 🎯 НОВА КАЛИБРАЦИЯ — многофайлово качване (Bet365+Pinnacle по
+// Bookmaker колона), обединяване по ID, ръчна проверка на
+// тегло+Value праг, автоматична оптимизация (Max Profit/ROI/Win
+// Rate), запазване като модел (пише в oaSaveWeightOverride +
+// отделен Value праг localStorage).
+// ═══════════════════════════════════════════════════════════════
+var CALIB_MARKETS = [
+  { key:'home',    label:'🏠 Домакинска победа', icon:'🏠', color:'var(--acc)', oaKey:'ft_home', outcomeFn:function(hg,ag){return hg>ag;} },
+  { key:'away',    label:'✈️ Победа гост',       icon:'✈️', color:'var(--pur)', oaKey:'ft_away', outcomeFn:function(hg,ag){return ag>hg;} },
+  { key:'over25',  label:'📈 Над 2.5 гола',        icon:'📈', color:'var(--grn)', oaKey:'over',    outcomeFn:function(hg,ag){return (hg+ag)>2.5;} },
+  { key:'under25', label:'📉 Под 2.5 гола',        icon:'📉', color:'var(--red)', oaKey:'over',    outcomeFn:function(hg,ag){return (hg+ag)<2.5;}, isUnder:true },
+  { key:'btts',    label:'⚽ Гол/Гол (BTTS)',      icon:'⚽', color:'var(--yel)', oaKey:'btts',    outcomeFn:function(hg,ag){return hg>0 && ag>0;} },
+];
 
-    <!-- Progress -->
-    <div id="calibProgress" style="display:none;margin-top:.6rem">
-      <div style="background:#0d1828;border-radius:6px;height:6px;overflow:hidden">
-        <div id="calibBar" style="background:var(--grn);height:100%;width:0%;transition:width .3s"></div>
-      </div>
-      <div id="calibStatus" style="font-size:.68rem;color:var(--grn);margin-top:.3rem;text-align:center"></div>
-    </div>
+var CALIB_MARKET_DATA = {}; // key -> [{id, home_team, away_team, hg, ag, oa_prob, bet365_odds, pinnacle_odds, actual}]
+var CALIB_RESULT_CACHE = {}; // key -> последен изчислен резултат {w,t,n,wr,profit,roi}
 
-    <!-- Резултат -->
-    <div id="calibResult" style="display:none;margin-top:.6rem;font-size:.72rem;
-      background:#091e15;border-radius:8px;padding:.6rem .8rem;color:var(--grn)"></div>
+var VALUE_THRESHOLD_STORE_KEY = 'xgpro_value_threshold_v1';
+function getValueThreshold(marketKey, defaultPct) {
+  try {
+    var o = JSON.parse(localStorage.getItem(VALUE_THRESHOLD_STORE_KEY) || '{}');
+    if (o[marketKey] && typeof o[marketKey].threshold === 'number') return o[marketKey].threshold;
+  } catch(e) {}
+  return defaultPct;
+}
+function saveValueThreshold(marketKey, threshold) {
+  var o = {};
+  try { o = JSON.parse(localStorage.getItem(VALUE_THRESHOLD_STORE_KEY) || '{}'); } catch(e) {}
+  o[marketKey] = { threshold: threshold, acceptedAt: new Date().toISOString() };
+  try { localStorage.setItem(VALUE_THRESHOLD_STORE_KEY, JSON.stringify(o)); } catch(e) {}
+}
 
+function calibRenderPanels() {
+  var box = document.getElementById('calibMarketPanels');
+  if (!box) return;
+  box.innerHTML = CALIB_MARKETS.map(function(m){
+    return calibPanelHtml(m);
+  }).join('');
+}
+
+function calibPanelHtml(m) {
+  var data = CALIB_MARKET_DATA[m.key] || [];
+  var n = data.length;
+  var defaultW = Math.round((1 - getOAWeight(m.oaKey, 35)/100) * 100); // текуща активна Pinnacle %
+  var defaultT = getValueThreshold(m.key, 10);
+  return (
+    '<div style="background:#07101f;border:1px solid var(--bord);border-radius:9px;padding:.7rem;margin-bottom:.7rem">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.5rem">' +
+        '<span style="font-size:.72rem;font-weight:700;color:' + m.color + '">' + m.label + '</span>' +
+        '<span id="calibCount_' + m.key + '" style="font-size:.58rem;color:var(--dim)">' + (n ? n + ' мача заредени' : 'няма данни') + '</span>' +
+      '</div>' +
+      '<label style="display:block;background:#0a1429;border:1px dashed var(--bord);border-radius:7px;padding:.5rem .7rem;cursor:pointer;margin-bottom:.6rem;text-align:center;font-size:.6rem;color:var(--dim)" id="calibLbl_' + m.key + '">' +
+        '📁 Избери 1 или няколко CSV файла (Bet365 + Pinnacle)' +
+        '<input type="file" accept=".csv" multiple style="display:none" onchange="calibLoadFiles(\'' + m.key + '\',this)">' +
+      '</label>' +
+
+      '<div style="display:flex;gap:.4rem;margin-bottom:.5rem;align-items:center;flex-wrap:wrap">' +
+        '<label style="font-size:.58rem;color:var(--dim)">Pinnacle тегло %</label>' +
+        '<input type="number" id="calibW_' + m.key + '" value="' + defaultW + '" min="0" max="100" style="width:55px;padding:.3rem;background:#0a1429;border:1px solid var(--bord);border-radius:5px;color:var(--txt);font-size:.6rem">' +
+        '<label style="font-size:.58rem;color:var(--dim)">Value праг %</label>' +
+        '<input type="number" id="calibT_' + m.key + '" value="' + defaultT + '" min="0" max="200" style="width:55px;padding:.3rem;background:#0a1429;border:1px solid var(--bord);border-radius:5px;color:var(--txt);font-size:.6rem">' +
+        '<button class="btn btn-sec" style="width:auto;margin-top:0;padding:.35rem .6rem;font-size:.58rem" onclick="calibManualTest(\'' + m.key + '\')">🧮 Изчисли</button>' +
+      '</div>' +
+
+      '<div style="display:flex;gap:.4rem;margin-bottom:.5rem;flex-wrap:wrap">' +
+        '<button class="btn btn-p" style="flex:1;min-width:100px;margin-top:0;padding:.4rem;font-size:.56rem" onclick="calibAutoOptimize(\'' + m.key + '\',\'profit\')">💰 Макс. Печалба</button>' +
+        '<button class="btn btn-p" style="flex:1;min-width:100px;margin-top:0;padding:.4rem;font-size:.56rem" onclick="calibAutoOptimize(\'' + m.key + '\',\'roi\')">📈 Макс. ROI</button>' +
+        '<button class="btn btn-p" style="flex:1;min-width:100px;margin-top:0;padding:.4rem;font-size:.56rem" onclick="calibAutoOptimize(\'' + m.key + '\',\'winrate\')">🎯 Макс. Успех</button>' +
+      '</div>' +
+
+      '<div id="calibOut_' + m.key + '" style="font-size:.6rem;color:var(--dim)"></div>' +
+    '</div>'
+  );
+}
+
+// ── Многофайлово качване с автоматично разпознаване на Bet365/Pinnacle
+// по "Bookmaker" колоната, обединяване по match ID. ──
+function calibLoadFiles(marketKey, input) {
+  var files = Array.from(input.files || []);
+  if (!files.length) return;
+  var lbl = document.getElementById('calibLbl_' + marketKey);
+  if (lbl) lbl.textContent = '⏳ Зареждане на ' + files.length + ' файла...';
+
+  var readers = files.map(function(f){
+    return new Promise(function(resolve){
+      var r = new FileReader();
+      r.onload = function(e){ resolve(e.target.result); };
+      r.readAsText(f);
+    });
+  });
+
+  Promise.all(readers).then(function(texts){
+    var byId = {}; // id -> {oa_prob, hg, ag, home_team, away_team, bet365_odds, pinnacle_odds}
+    texts.forEach(function(text){
+      var lines = text.split('\n');
+      if (lines.length < 2) return;
+      var header = parseCSVLine(lines[0]).map(function(h){ return h.trim().replace(/^"|"$/g,''); });
+      for (var i = 1; i < lines.length; i++) {
+        var line = lines[i].trim();
+        if (!line) continue;
+        var parts = parseCSVLine(line);
+        var obj = {};
+        header.forEach(function(col, idx){ obj[col] = (parts[idx]||'').trim().replace(/^"|"$/g,''); });
+        if (obj['Status'] !== 'FT') continue;
+        var hg = parseFloat(obj['Home Goals']), ag = parseFloat(obj['Away Goals']);
+        var prob = parseFloat(obj['Probability (%)']);
+        var odds = parseFloat(obj['Opening Odds']);
+        var id = obj['ID'];
+        var bk = (obj['Bookmaker']||'').trim();
+        if (!id || isNaN(hg) || isNaN(ag) || isNaN(prob) || isNaN(odds) || odds<=0) continue;
+        if (!byId[id]) byId[id] = { id:id, home_team:obj['Home Team'], away_team:obj['Away Team'], hg:hg, ag:ag, oa_prob: prob/100 };
+        if (bk === 'Bet365') byId[id].bet365_odds = odds;
+        else if (bk === 'Pinnacle') byId[id].pinnacle_odds = odds;
+      }
+    });
+
+    var merged = Object.values(byId).filter(function(r){
+      return r.bet365_odds > 0 && r.pinnacle_odds > 0;
+    }).map(function(r){
+      var mCfg = CALIB_MARKETS.find(function(x){ return x.key===marketKey; });
+      r.actual = mCfg.outcomeFn(r.hg, r.ag) ? 1 : 0;
+      r.pin_prob = 1 / r.pinnacle_odds;
+      return r;
+    });
+
+    CALIB_MARKET_DATA[marketKey] = merged;
+    if (lbl) lbl.textContent = '✅ ' + files.length + ' файла обработени';
+    var cnt = document.getElementById('calibCount_' + marketKey);
+    if (cnt) cnt.textContent = merged.length + ' мача заредени (с двата коефициента)';
+    updateCalibLastRun();
+  });
+}
+
+function calibComputeForWeight(marketKey, weightPct, thresholdPct) {
+  var data = CALIB_MARKET_DATA[marketKey] || [];
+  var w = weightPct / 100;
+  var n = 0, wins = 0, profit = 0;
+  data.forEach(function(r){
+    var blended = (1-w)*r.oa_prob + w*r.pin_prob;
+    var valuePct = (blended * r.bet365_odds - 1) * 100;
+    if (valuePct < thresholdPct) return;
+    n++;
+    if (r.actual === 1) { wins++; profit += (r.bet365_odds - 1); }
+    else { profit -= 1; }
+  });
+  return { w: weightPct, t: thresholdPct, n: n, wr: n ? wins/n*100 : 0, profit: profit, roi: n ? profit/n*100 : 0 };
+}
+
+function calibManualTest(marketKey) {
+  var wEl = document.getElementById('calibW_' + marketKey);
+  var tEl = document.getElementById('calibT_' + marketKey);
+  var w = parseFloat(wEl.value) || 0;
+  var t = parseFloat(tEl.value) || 0;
+  var data = CALIB_MARKET_DATA[marketKey] || [];
+  var out = document.getElementById('calibOut_' + marketKey);
+  if (!data.length) { out.innerHTML = '⚠ Качи CSV файлове първо'; return; }
+  var r = calibComputeForWeight(marketKey, w, t);
+  CALIB_RESULT_CACHE[marketKey] = r;
+  calibRenderResult(marketKey, r, 'Ръчна проверка');
+}
+
+function calibAutoOptimize(marketKey, mode) {
+  var data = CALIB_MARKET_DATA[marketKey] || [];
+  var out = document.getElementById('calibOut_' + marketKey);
+  if (!data.length) { out.innerHTML = '⚠ Качи CSV файлове първо'; return; }
+
+  var weightGrid = []; for (var w=0; w<=100; w+=5) weightGrid.push(w);
+  var threshGrid = [0,5,8,10,12,15,18,20,25,30,35,40,50];
+  var MIN_N = Math.max(30, Math.round(data.length*0.01)); // мин. 1% от мачовете или 30
+
+  var best = null;
+  weightGrid.forEach(function(w){
+    threshGrid.forEach(function(t){
+      var r = calibComputeForWeight(marketKey, w, t);
+      if (r.n < MIN_N) return;
+      var score = mode==='profit' ? r.profit : mode==='roi' ? r.roi : r.wr;
+      if (!best || score > best.score) best = Object.assign({score:score}, r);
+    });
+  });
+
+  if (!best) { out.innerHTML = '⚠ Няма конфигурация с достатъчно залози (мин. ' + MIN_N + ')'; return; }
+
+  document.getElementById('calibW_' + marketKey).value = best.w;
+  document.getElementById('calibT_' + marketKey).value = best.t;
+  CALIB_RESULT_CACHE[marketKey] = best;
+  var modeLabels = {profit:'Максимална печалба', roi:'Максимален ROI', winrate:'Максимална успеваемост'};
+  calibRenderResult(marketKey, best, '🤖 Автоматично намерено — ' + modeLabels[mode]);
+}
+
+function calibRenderResult(marketKey, r, sourceLabel) {
+  var out = document.getElementById('calibOut_' + marketKey);
+  out.innerHTML =
+    '<div style="background:#0a1429;border:1px solid rgba(52,211,153,.25);border-radius:7px;padding:.55rem .7rem">' +
+      '<div style="font-size:.58rem;color:var(--pur);margin-bottom:.3rem">' + sourceLabel + ' — ' + r.w + '% Pinnacle, Value≥' + r.t + '%</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:.3rem;font-size:.62rem">' +
+        '<div>Залози: <b style="color:var(--txt)">' + r.n + '</b></div>' +
+        '<div>Успеваемост: <b style="color:var(--txt)">' + r.wr.toFixed(1) + '%</b></div>' +
+        '<div>Профит: <b style="color:' + (r.profit>=0?'var(--grn)':'var(--red)') + '">' + (r.profit>=0?'+':'') + r.profit.toFixed(1) + 'u</b></div>' +
+        '<div>ROI: <b style="color:' + (r.roi>=0?'var(--grn)':'var(--red)') + '">' + (r.roi>=0?'+':'') + r.roi.toFixed(2) + '%</b></div>' +
+      '</div>' +
+      '<button class="btn btn-p" style="width:100%;margin-top:.5rem;padding:.4rem;font-size:.6rem" onclick="calibSaveAsModel(\'' + marketKey + '\')">💾 Запази като модел</button>' +
+    '</div>';
+}
+
+function calibSaveAsModel(marketKey) {
+  var r = CALIB_RESULT_CACHE[marketKey];
+  if (!r) return;
+  var mCfg = CALIB_MARKETS.find(function(x){ return x.key===marketKey; });
+  var oaWeight = 100 - r.w; // getOAWeight очаква OA% (не Pinnacle%)
+  oaSaveWeightOverride(mCfg.oaKey, oaWeight, {
+    n: r.n, source: 'calibration_v2',
+    roiModel: r.roi.toFixed(2), roiModelN: r.n,
+    srValueModel: r.wr.toFixed(1), srAllModel: r.wr.toFixed(1)
+  });
+  saveValueThreshold(marketKey, r.t);
+  var out = document.getElementById('calibOut_' + marketKey);
+  if (out) out.innerHTML += '<div style="color:var(--grn);font-size:.6rem;margin-top:.4rem">✅ Запазено — вече активно за всички бъдещи изчисления</div>';
+  updateCalibLastRun();
+}
+
+document.addEventListener('DOMContentLoaded', function(){ calibRenderPanels(); });
+if (document.readyState !== 'loading') calibRenderPanels();
+</script>
 
     <!-- ════════════════════════════════════════════════════ -->
     <!-- ⚡ QUICK BACKTEST — paste мачове и виж прогнози -->
@@ -19398,6 +19557,7 @@ function openCalibrationModal() {
   if (typeof loadTrainingMatchCount === 'function') loadTrainingMatchCount();
   if (typeof setCalibTrainingDays === 'function') setCalibTrainingDays(0);
   if (typeof trainLabUpdateSavedInfo === 'function') trainLabUpdateSavedInfo();
+  if (typeof calibRenderPanels === 'function') calibRenderPanels();
 }
 function closeCalibModal() {
   var m = document.getElementById('calibModal');
