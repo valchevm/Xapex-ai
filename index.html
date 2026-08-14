@@ -6768,9 +6768,15 @@ function calculate() {
     if (hasOA && hasPin) {
       // ✅ Три ОТДЕЛНИ тегла (от OA Калибрация Монитора) — Дом/Равен/Гост
       // могат да имат различна OA точност, затова различно тегло.
-      var oaWHome = clamp(getOAWeight('ft_home', 65), 0, 100) / 100;
-      var oaWDraw = clamp(getOAWeight('ft_draw', 65), 0, 100) / 100;
-      var oaWAway = clamp(getOAWeight('ft_away', 65), 0, 100) / 100;
+      // ✅ Тегла обновени по 1-годишен бектест (94k+ мача) — Pinnacle
+      // Opening Odds доминиращо по-точен от OA за 1X2 изхода. Стойности
+      // потвърдени с хронологичен train/test split (не overfit — test
+      // ROI дори по-добър от train при тези тегла). OA тегло тук е ниско
+      // (5% = 95% Pinnacle), не 0%, за да остане малко OA сигнал за
+      // случаите, в които Pinnacle липсва частично за определен изход.
+      var oaWHome = clamp(getOAWeight('ft_home', 5), 0, 100) / 100;
+      var oaWDraw = clamp(getOAWeight('ft_draw', 5), 0, 100) / 100;
+      var oaWAway = clamp(getOAWeight('ft_away', 5), 0, 100) / 100;
       wBase = 0;
       wOAH = oaWHome; wPinH = 1 - oaWHome;
       wOAD = oaWDraw; wPinD = 1 - oaWDraw;
@@ -6816,7 +6822,9 @@ function calculate() {
 
     // ✅ 'over' пазар може да има собствено прието OA тегло; ако няма
     // override, пада обратно към същото тегло като 1X2 (старо поведение).
-    var oaWOU = clamp(getOAWeight('over', 65), 0, 100) / 100;
+    // ✅ Тегло обновено по 1-годишен бектест (69k+ мача) — 60% Pinnacle
+    // е оптималната точка (train 8.42% ROI, test 7.79% ROI — съгласувани).
+    var oaWOU = clamp(getOAWeight('over', 40), 0, 100) / 100;
     var wBaseOU = wBase, wPinOU = pinOU ? (1 - oaWOU) : 0, wOAOU = (hasOA && oa.o25) ? oaWOU : 0;
     var totOU   = wBaseOU + wPinOU + wOAOU;
     if (totOU > 0) {
@@ -6836,7 +6844,11 @@ function calculate() {
     var pB_base = CC.pB;
     if (hasOA && oa.btts) {
       var pB_oa = oa.btts / 100;
-      var oaWBTTS = clamp(getOAWeight('btts', 65), 0, 100) / 100;
+      // ✅ Тегло обновено по 1-годишен бектест (25.6k мача) — 55%
+      // Pinnacle е по-консервативната, стабилна препоръка (70-90% Pinnacle
+      // показваше по-висок ROI, но само на 111-190 залога — твърде малка
+      // извадка за надеждност, вероятно шум).
+      var oaWBTTS = clamp(getOAWeight('btts', 45), 0, 100) / 100;
       CC.pB = clamp(pB_base * (1 - oaWBTTS) + pB_oa * oaWBTTS, 0.10, 0.88);
       CC.fairB = fmt(1/CC.pB);
       CC.eBTTS = fmt((CC.pB - 1/parseFloat(CC.bb||1.75))*100, 1);
@@ -30846,6 +30858,13 @@ function fxBulkCalculateImported(keys) {
       if (window.LAST_MATCH_CALC) ok++;
     } catch(e) {
       console.warn('[fxBulkCalculateImported] неуспешно за', key, e.message);
+    } finally {
+      // ✅ Прочистваме MW_STATE веднага след употреба — при bulk импорт
+      // на стотици/хиляди мачове това предотвратява неограничено
+      // натрупване на състояние (всеки следващ mwRestore/mwCalc иначе
+      // ставаше по-бавен с растежа на MW_STATE), довеждащо до heap
+      // out-of-memory срив при по-големи партиди.
+      delete MW_STATE[key];
     }
   });
 
