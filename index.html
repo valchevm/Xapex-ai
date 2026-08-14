@@ -3082,7 +3082,8 @@ if (document.readyState !== 'loading') calibRenderPanels();
     <!-- ── Пълен CSV импорт (статистика + OA вероятности + коефициенти
          от 3 bookmaker-а в един файл) — попълва всичко автоматично ── -->
     <div style="background:#07101f;border:1px solid rgba(56,189,248,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
-      <div style="font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.5rem">📁 Пълен CSV импорт (статистика + OA + коефициенти)</div>
+    <div onclick="fxToggleSection('sec_fximport')" style="font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.5rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center">📁 Пълен CSV импорт (статистика + OA + коефициенти)<span id="sec_fximport_chev" style="transition:transform .2s;font-size:.6rem;color:var(--dim)">▶</span></div>
+    <div id="sec_fximport" style="display:none">
       <div style="font-size:.58rem;color:var(--dim);margin-bottom:.6rem;line-height:1.5">
         Качи CSV с всичко в едно — статистика, OA вероятности за всички пазари, Pinnacle/Bet365/Betano коефициенти. Автоматично попълва мачовете — отваряш и директно "⚡ Изчисли", без ръчно въвеждане.
       </div>
@@ -3092,21 +3093,25 @@ if (document.readyState !== 'loading') calibRenderPanels();
         <input type="file" id="fxFullCsvInput" accept=".csv" hidden onchange="fxImportFullCsv(event)">
       </div>
       <div id="fxFullCsvResult" style="margin-top:.5rem;font-size:.6rem;color:var(--dim)"></div>
+    </div><!-- /sec_fximport -->
     </div>
 
     <!-- ── Филтър по дата — показва мачове само за избрана дата ── -->
     <div style="background:#07101f;border:1px solid rgba(56,189,248,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
-      <div style="font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.5rem">📅 Филтър по дата</div>
+    <div onclick="fxToggleSection('sec_fxdate')" style="font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.5rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center">📅 Филтър по дата<span id="sec_fxdate_chev" style="transition:transform .2s;font-size:.6rem;color:var(--dim)">▶</span></div>
+    <div id="sec_fxdate" style="display:none">
       <div style="display:flex;gap:.5rem">
         <input type="date" id="fxDateFilterInput" style="flex:1;padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.65rem;font-family:var(--mono)" onchange="fxApplyDateFilter()">
         <button onclick="fxClearDateFilter()" class="btn btn-sec" style="width:auto;margin-top:0;font-size:.63rem;padding:.4rem .8rem">✕ Всички дати</button>
       </div>
       <div id="fxDateFilterResult" style="margin-top:.4rem;font-size:.58rem;color:var(--dim)"></div>
+    </div><!-- /sec_fxdate -->
     </div>
 
     <!-- ── Филтър по прогноза (модел/пазар/коефициент/подредба) ── -->
     <div style="background:#07101f;border:1px solid rgba(167,139,250,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
-      <div style="font-size:.68rem;color:#a78bfa;font-weight:600;margin-bottom:.5rem">🎯 Филтър по прогноза</div>
+    <div onclick="fxToggleSection('sec_fxmodel')" style="font-size:.68rem;color:#a78bfa;font-weight:600;margin-bottom:.5rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center">🎯 Филтър по прогноза<span id="sec_fxmodel_chev" style="transition:transform .2s;font-size:.6rem;color:var(--dim)">▶</span></div>
+    <div id="sec_fxmodel" style="display:none">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.4rem">
         <select id="fxModelFilterSource" style="padding:.4rem;background:#0a1429;color:var(--txt);border:1px solid var(--bord);border-radius:5px;font-size:.65rem;font-family:var(--mono)">
           <option value="full">🧠 Пълен модел (OA+Pinnacle)</option>
@@ -3140,30 +3145,36 @@ if (document.readyState !== 'loading') calibRenderPanels();
         <button onclick="fxClearModelFilter()" class="btn btn-sec" style="flex:0 0 auto;width:auto;margin-top:0;font-size:.65rem;padding:.5rem .8rem">✕ Изчисти</button>
       </div>
       <div id="fxModelFilterResult" style="margin-top:.4rem;font-size:.58rem;color:var(--dim)"></div>
+    </div><!-- /sec_fxmodel -->
     </div>
 
     <!-- ── Ръчна публикация в BetPro — 3 режима ── -->
     <div style="background:#07101f;border:1px solid rgba(56,189,248,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
-      <div style="font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.5rem">📤 Публикувай в BetPro</div>
+      <div onclick="fxToggleSection('sec_fxpublish')" style="font-size:.68rem;color:var(--acc);font-weight:600;margin-bottom:.5rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center">📤 Публикувай в BetPro<span id="sec_fxpublish_chev" style="transition:transform .2s;font-size:.6rem;color:var(--dim)">▶</span></div>
+      <div id="sec_fxpublish" style="display:none">
       <button onclick="fxPublishBetProManual('full')" class="btn btn-p" style="width:100%;font-size:.63rem;padding:.5rem;margin-bottom:.4rem">🧠 Само с прогноза от пълния модел (OA+Pinnacle)</button>
       <button onclick="fxPublishBetProManual('oa')" class="btn btn-sec" style="width:100%;font-size:.63rem;padding:.5rem;margin-bottom:.4rem">🎯 Само с OA модел (чист OA)</button>
       <button onclick="fxPublishBetProManual('all')" class="btn btn-sec" style="width:100%;font-size:.63rem;padding:.5rem">📋 Всички мачове с каквато и да е прогноза</button>
       <div id="fxPublishBetProResult" style="margin-top:.5rem;font-size:.58rem;color:var(--dim)"></div>
+      </div>
     </div>
 
     <!-- ── Пълен CSV експорт — всички данни за всеки мач ── -->
     <div style="background:#07101f;border:1px solid rgba(74,222,128,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
-      <div style="font-size:.68rem;color:#4ade80;font-weight:600;margin-bottom:.4rem">⬇️ Пълен CSV експорт</div>
+    <div onclick="fxToggleSection('sec_fxexport')" style="font-size:.68rem;color:#4ade80;font-weight:600;margin-bottom:.4rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center">⬇️ Пълен CSV експорт<span id="sec_fxexport_chev" style="transition:transform .2s;font-size:.6rem;color:var(--dim)">▶</span></div>
+    <div id="sec_fxexport" style="display:none">
       <div style="font-size:.58rem;color:var(--dim);margin-bottom:.5rem;line-height:1.5">
         Изтегля отбори, дати, OA вероятности, Bet365 и Pinnacle коефициенти, и прогнозата на моя модел за всеки мач. Липсващи данни остават празни клетки.
       </div>
       <button onclick="fxExportFullCsv()" class="btn btn-p" style="width:100%;font-size:.63rem;padding:.5rem">⬇️ Изтегли всички мачове (CSV)</button>
       <div id="fxExportFullCsvResult" style="margin-top:.5rem;font-size:.58rem;color:var(--dim)"></div>
+    </div><!-- /sec_fxexport -->
     </div>
 
     <!-- ── Проследяване на резултати (маркирай → въведи резултат → анализ) ── -->
     <div style="background:#07101f;border:1px solid rgba(74,222,128,.25);border-radius:9px;padding:.7rem;margin-bottom:.8rem">
-      <div style="font-size:.68rem;color:#4ade80;font-weight:600;margin-bottom:.5rem">📈 Проследяване на резултати</div>
+      <div onclick="fxToggleSection('sec_fxtrack')" style="font-size:.68rem;color:#4ade80;font-weight:600;margin-bottom:.5rem;cursor:pointer;display:flex;justify-content:space-between;align-items:center">📈 Проследяване на резултати<span id="sec_fxtrack_chev" style="transition:transform .2s;font-size:.6rem;color:var(--dim)">▶</span></div>
+      <div id="sec_fxtrack" style="display:none">
       <div style="font-size:.58rem;color:var(--dim);margin-bottom:.6rem;line-height:1.5">
         Маркирай мачовете, филтрирани по-горе (с избран модел+пазар), после утре въведи резултатите и виж успеваемостта.
       </div>
@@ -3187,6 +3198,7 @@ if (document.readyState !== 'loading') calibRenderPanels();
         </div>
       </div>
       <div id="fxTrackPanel" style="margin-top:.6rem"></div>
+      </div>
     </div>
 
     <!-- ── Paste Fixtures (сгъваемо — не бута списъка надолу) ── -->
@@ -27921,6 +27933,17 @@ function fxFormatMatchDate(dateStr) {
 // ── Филтър по дата — глобален, за да работи ЗАЕДНО с филтъра по
 // прогноза (двата могат да са активни едновременно). ──
 var FX_ACTIVE_DATE_FILTER = null; // 'YYYY-MM-DD' или null = всички дати
+
+// ── Сгъваеми секции във Fixtures — намаляват дължината на страницата,
+// всяка секция е затворена по подразбиране, отваря се при клик. ──
+function fxToggleSection(id) {
+  var box = document.getElementById(id);
+  var chev = document.getElementById(id + '_chev');
+  if (!box) return;
+  var isHidden = box.style.display === 'none';
+  box.style.display = isHidden ? 'block' : 'none';
+  if (chev) chev.textContent = isHidden ? '▼' : '▶';
+}
 
 function fxApplyDateFilter() {
   var input = document.getElementById('fxDateFilterInput');
