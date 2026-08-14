@@ -27958,7 +27958,7 @@ function poissonRandomSample(lambda) {
 function fxRunMonteCarloSim(country, idx) {
   var m = (FX_PASTED[country] || [])[idx];
   if (!m || !m.modelProbs || !(m.modelProbs.lambdaH > 0) || !(m.modelProbs.lambdaA > 0)) {
-    if (typeof showToast === 'function') showToast('⚠ Мачът трябва да е изчислен първо (⚡ Изчисли)', 'error');
+    alert('⚠ Този мач още няма изчислена прогноза (λ стойности).\n\nОтвори мача (кликни върху имената на отборите) и натисни "⚡ Изчисли" вътре в панела, после пробвай симулацията отново.');
     return;
   }
   var lambdaH = m.modelProbs.lambdaH, lambdaA = m.modelProbs.lambdaA;
@@ -28347,16 +28347,16 @@ function fxRenderPastedCountries() {
         }
       }
 
-      // ✅ MONTE CARLO СИМУЛАЦИЯ — бутон, видим само ако мачът е изчислен
-      // (има λ стойности за Poisson симулация).
-      var simHtml = '';
-      if (m.modelProbs && m.modelProbs.lambdaH > 0 && m.modelProbs.lambdaA > 0) {
-        simHtml = '<button onclick="event.stopPropagation();fxRunMonteCarloSim(\'' +
-          origCountry.replace(/\x27/g,"\\'") + '\',' + origIdx + ')" ' +
-          'style="margin-top:5px;width:100%;padding:5px;background:rgba(167,139,250,.1);' +
-          'border:1px solid rgba(167,139,250,.35);color:#a78bfa;border-radius:5px;' +
-          'font-size:.6rem;font-weight:600;cursor:pointer">🎲 Симулирай 100,000 мача</button>';
-      }
+      // ✅ MONTE CARLO СИМУЛАЦИЯ — бутонът е ВИНАГИ видим (преди беше
+      // скрит, ако мачът още няма λ стойности — това вероятно е причината
+      // потребителят да го възприема като "не работи": бутонът просто
+      // не се показваше за мачове, които не са изчислени индивидуално).
+      // Сега при клик, ако липсват λ, показва ясен alert (не тих toast).
+      var simHtml = '<button onclick="event.stopPropagation();fxRunMonteCarloSim(\'' +
+        origCountry.replace(/\x27/g,"\\'") + '\',' + origIdx + ')" ' +
+        'style="margin-top:5px;width:100%;padding:5px;background:rgba(167,139,250,.1);' +
+        'border:1px solid rgba(167,139,250,.35);color:#a78bfa;border-radius:5px;' +
+        'font-size:.6rem;font-weight:600;cursor:pointer">🎲 Симулирай 100,000 мача</button>';
 
       return '<div class="fx-match-item" data-mw-key="' + escHtml(origCountry) + '|' + origIdx + '" onclick="fxOpenMatchWorkspace(this,\'' +
         origCountry.replace(/\x27/g,"\\'") + '\',' + origIdx + ')">' +
