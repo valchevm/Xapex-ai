@@ -28014,13 +28014,45 @@ function fxRenderSimResult(m, r) {
       '</div></div>';
   };
 
+  // ── Топ резултат + ниво на увереност (Вариант 3) ──
+  var top = r.topScorelines[0];
+  var second = r.topScorelines[1];
+  var gapPct = second ? (top.pct - second.pct) : 100;
+  var isUncertain = second && gapPct < 3; // <3 пункта разлика = несигурно
+  var confidenceHtml = isUncertain
+    ? '<div style="font-size:.56rem;color:var(--red);margin-top:.5rem;background:rgba(248,113,113,.1);border-radius:6px;padding:.35rem .6rem">' +
+        '⚠️ Несигурна прогноза — следващият резултат (' + second.score + ') е само на ' + gapPct.toFixed(1) + '% разлика' +
+      '</div>'
+    : '';
+
+  // ── Ред с алтернативни резултати като чипове (останалите от топ 6, без #1) ──
+  var altChips = r.topScorelines.slice(1).map(function(s){
+    return '<span style="background:#0a1429;border:1px solid var(--bord);border-radius:6px;padding:.3rem .55rem;' +
+      'font-size:.62rem;color:var(--txt);white-space:nowrap">' + s.score + ' <span style="color:var(--dim);font-size:.54rem">' + s.pct.toFixed(1) + '%</span></span>';
+  }).join('');
+
+  var heroHtml =
+    '<div style="background:linear-gradient(135deg,rgba(167,139,250,.15),rgba(56,189,248,.08));' +
+      'border:1px solid rgba(167,139,250,.4);border-radius:10px;padding:1rem;text-align:center;margin-bottom:.6rem">' +
+      '<div style="font-size:.58rem;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin-bottom:.6rem">Най-вероятен резултат</div>' +
+      '<div style="display:flex;align-items:center;justify-content:center;gap:.8rem;margin-bottom:.5rem">' +
+        '<span style="font-size:.72rem;color:var(--txt);font-weight:600;flex:1;text-align:center">' + escHtml(m.home) + '</span>' +
+        '<span style="background:#0a1429;border:1px solid var(--grn);border-radius:8px;padding:.5rem 1rem;font-size:1.4rem;font-weight:800;color:var(--grn)">' + top.score + '</span>' +
+        '<span style="font-size:.72rem;color:var(--txt);font-weight:600;flex:1;text-align:center">' + escHtml(m.away) + '</span>' +
+      '</div>' +
+      '<div style="font-size:.62rem;color:var(--yel);font-weight:700">' + top.pct.toFixed(1) + '% от симулациите</div>' +
+      confidenceHtml +
+    '</div>' +
+    '<div style="display:flex;gap:.4rem;flex-wrap:wrap;justify-content:center;margin-bottom:.8rem">' + altChips + '</div>';
+
   var html =
-    '<div style="text-align:center;margin-bottom:.8rem;font-size:.7rem;color:var(--txt);font-weight:600">' +
+    '<div style="text-align:center;margin-bottom:.4rem;font-size:.7rem;color:var(--txt);font-weight:600">' +
       escHtml(m.home) + ' <span style="color:var(--dim)">vs</span> ' + escHtml(m.away) +
     '</div>' +
     '<div style="text-align:center;font-size:.56rem;color:var(--dim);margin-bottom:.8rem">' +
       'На база ' + r.N.toLocaleString() + ' симулации · λ ' + r.lambdaH.toFixed(2) + '–' + r.lambdaA.toFixed(2) +
     '</div>' +
+    heroHtml +
     '<div style="background:#07101f;border-radius:8px;padding:.6rem .7rem;margin-bottom:.8rem">' +
       '<div style="font-size:.62rem;color:var(--acc);font-weight:600;margin-bottom:.5rem">Резултат от мача</div>' +
       bar('🏠 Победа ' + escHtml(m.home), r.winPct, 'var(--grn)') +
